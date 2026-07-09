@@ -26,8 +26,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Relocating/packed Soundmonitor tunes have their init routine emulated in
+# py65 so the song tables land in place; direct-load tunes decode with stdlib.
+emu = ["pysidtracker[emu]"]
 dev = [
     "black>=24",
+    "py65>=1.1",
     "pylint>=3",
     "pytest>=7",
     "pytest-cov>=4",
