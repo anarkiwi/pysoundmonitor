@@ -1,10 +1,20 @@
-# Soundmonitor container, detection, and song-data model
+# Soundmonitor format
 
 Summary of what `pysoundmonitor` decodes. Structural facts are transcribed from
 the reverse-engineering reference (a private repo); no player or tune bytes are
 reproduced here.
 
-## Container
+## Overview
+
+Soundmonitor (64'er / Chris Hulsbeck) is HVSC tracker #6. `pysoundmonitor`
+decodes the container, the detection anchor, and the section→stream song-data
+structures into a model. A byte-exact per-frame playback engine is intentionally
+out of scope: reproducing it faithfully would require material derived from the
+copyrighted player.
+
+## Container and detection notes
+
+### Container
 
 A Soundmonitor tune is a PSID/RSID (or bare `.prg`) wrapping a C64 memory image
 of player code plus per-tune song data. `pysidtracker` unwraps the container and
@@ -12,7 +22,7 @@ places the image at its load address. The player is **relocatable** and the
 header `load`/`init`/`play` addresses are not a trustworthy locator (a relocated
 `$C000` build is the norm).
 
-## Detection (relocation-tolerant)
+### Detection (relocation-tolerant)
 
 The engine is CIA-timed and programs its **own** play period: the section loader
 reads the CIA-1 Timer-A latch from the per-section header and writes it to the
@@ -31,7 +41,7 @@ then classifies the tune as `DIRECT` (found as loaded) or, via the base library'
 init emulation, `RELOCATED`/`PACKED`. `parse()` emulates init when the song tables
 are not decodable in the directly loaded image (a relocating build).
 
-## Data-region base
+### Data-region base
 
 The data region is a run of page-aligned split (lo/hi) pointer and transpose
 tables indexed by the section number. Its base page is recovered from the
@@ -39,7 +49,7 @@ loader's own `LDA $pp00,X` table-indexing operands (the smallest page whose
 voice + section-header table geometry is all present), falling back to the image
 load address — no baked addresses.
 
-## Song model
+## Data model
 
 Layout, in byte offsets from the data base:
 
@@ -82,9 +92,16 @@ up-dwell, down-dwell, step, bound, flags`) follows (24-byte record stride).
 absolute-indexed operands (their difference is the table length) validated by the
 hi table's octave-ramp signature.
 
-## Scope
+## Player and playback notes
 
 `pysoundmonitor` decodes the container, detection anchor, and song-data
 structures into a model. A byte-exact per-frame playback engine is intentionally
 out of scope: reproducing it faithfully would require material derived from the
-copyrighted player.
+copyrighted player. Cadence is exposed per section (`latch + 1` cycles/call) and
+via `song.cia_latch` for the CIA-timed builds.
+
+## References
+
+- Soundmonitor (64'er / Chris Hulsbeck), HVSC tracker #6.
+- [`pysidtracker`](https://github.com/anarkiwi/pysidtracker) — shared
+  container/image/detection base.
