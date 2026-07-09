@@ -24,10 +24,15 @@ CMP_06 = bytes((0xC9, 0x06))  # CMP #$06   (hi-latch guard)
 FINGERPRINT_WINDOW = 0x10
 
 # ``LDA abs,X`` opcode: the section loader indexes the page-aligned split
-# pointer tables with it, so its operands recover the data-region base page.
+# pointer tables (and the note-freq tables) with it, so its operands recover the
+# data-region base page and the note-freq table addresses relocation-tolerantly.
 LDA_ABSX = 0xBD
-# How far before the fingerprint to scan for the table-indexing operands.
-LOADER_SCAN_BACK = 0x200
+# ``CPX abs`` / ``LDX abs`` opcodes: the section-advance code compares the live
+# section index against ``sec_last`` (``CPX``) and reloads ``sec_start``
+# (``LDX``) from two adjacent player globals, so their operands recover the song
+# section bounds relocation-tolerantly (see ``_recover_section_bounds``).
+CPX_ABS = 0xEC
+LDX_ABS = 0xAE
 
 # --- Data-region table geometry (byte offsets from the data base) -----------
 # The per-tune data region is a run of page-aligned split (lo/hi) pointer and
@@ -124,9 +129,16 @@ MAX_PATTERN_LEN = 256
 
 # --- Note-frequency tables --------------------------------------------------
 # Two parallel u8 tables (freq hi, then freq lo) of one entry per semitone; the
-# hi table is an octave ramp (non-decreasing, doubling per octave).
-NOTE_FREQ_LEN = 96
-# Content signature used to locate the hi table without trusting an address.
+# hi table is an octave ramp (non-decreasing, doubling per octave). The lo table
+# starts exactly ``NOTE_FREQ_LEN`` bytes after the hi table (the two tables abut,
+# and the player reads ``LDA NoteFreqHi,X`` / ``LDA NoteFreqLo,X`` -- adjacent
+# absolute-indexed operands whose difference IS the table length). On real HVSC
+# tunes the tables are 95 entries (the hi ramp climbs 01..f8 over indices 0..94).
+NOTE_FREQ_LEN = 95
+# Candidate table lengths tried (largest valid wins) when the pair is located
+# from the player's paired ``LDA`` operands.
+NOTE_FREQ_LENGTHS = (96, 95)
+# Content signature used to validate a candidate hi table.
 NOTE_FREQ_HI_START_MAX = 0x04  # first hi byte is small (low octave)
 NOTE_FREQ_HI_END_MIN = 0x20  # last hi byte has climbed into the high octaves
 NOTE_FREQ_MIN_STEPS = 6  # at least this many upward steps across the ramp

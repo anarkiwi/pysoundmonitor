@@ -9,6 +9,7 @@ from pysoundmonitor import SidParseError, parse, read
 from pysoundmonitor import constants as c
 from pysoundmonitor.reader import (
     _recover_base,
+    _run_init,
     decode_note_freq,
     find_fingerprint,
     locate_note_freq,
@@ -89,13 +90,13 @@ def test_recover_base_fallback_without_operands():
     data, anchor = helpers.build_sid(with_operands=False)
     image = SidImage.from_bytes(data)
     assert find_fingerprint(image) == anchor
-    assert _recover_base(image, anchor) == 0x1000  # image.load fallback
+    assert _recover_base(image) == 0x1000  # image.load fallback
 
 
 def test_recover_base_from_operands():
-    data, anchor = helpers.build_sid(with_operands=True)
+    data, _ = helpers.build_sid(with_operands=True)
     image = SidImage.from_bytes(data)
-    assert _recover_base(image, anchor) == 0x1000
+    assert _recover_base(image) == 0x1000
     # still decodes with the operand-recovered base
     assert len(parse(data).sections) == 1
 
@@ -117,6 +118,20 @@ def test_find_fingerprint_needs_hi_store():
     payload = c.STA_DC04 + c.CMP_06 + bytes(0x20)
     image = SidImage.from_prg(bytes((0x00, 0x10)) + payload)
     assert find_fingerprint(image) is None
+
+
+def test_run_init_no_header_is_noop():
+    # A bare .prg has no init address, so init cannot run.
+    _, _ = helpers.build_prg()
+    image = SidImage.from_prg(bytes((0x00, 0x10)) + bytes(0x40))
+    assert _run_init(image) is False
+
+
+def test_run_init_with_header_runs():
+    data, _ = helpers.build_sid()
+    image = SidImage.from_bytes(data)
+    assert _run_init(image) is True
+    assert image.end == 0x10000
 
 
 def test_decode_note_freq_direct():

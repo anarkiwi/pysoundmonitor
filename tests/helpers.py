@@ -128,6 +128,13 @@ def build_payload(
             mem[freq + i] = 1 + (i * 0xFE) // (c.NOTE_FREQ_LEN - 1)
         for i in range(c.NOTE_FREQ_LEN):
             mem[freq + c.NOTE_FREQ_LEN + i] = (i * 0x10) & 0xFF
+        # The player reads the tables with paired LDA abs,X (hi then lo); emit
+        # those operands so the locator finds them exactly as on a real tune.
+        mem[pos : pos + 3] = bytes((c.LDA_ABSX, freq & 0xFF, (freq >> 8) & 0xFF))
+        pos += 3
+        lo = freq + c.NOTE_FREQ_LEN
+        mem[pos : pos + 3] = bytes((c.LDA_ABSX, lo & 0xFF, (lo >> 8) & 0xFF))
+        pos += 3
         end = freq + 2 * c.NOTE_FREQ_LEN
     return bytes(mem[base:end]), base, player, player + 0x20, anchor
 

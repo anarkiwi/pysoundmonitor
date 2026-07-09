@@ -23,9 +23,13 @@ Those addresses never relocate, so the sequence
 STA $DC04  ...  CMP #$06  ...  STA $DC05
 ```
 
-is a load-address-independent fingerprint. `recognize()` returns its address;
-`SoundMonitorSidParser().detect()` then classifies the tune as `DIRECT` (found as
-loaded) or, via the base library's init emulation, `RELOCATED`/`PACKED`.
+is a load-address-independent fingerprint. It is present in the CIA-timed builds
+($C000 Hulsbeck/64'er, $1000); the fixed-cadence builds omit the register writes
+but carry the same note-frequency tables, so `recognize()` falls back to those.
+`recognize()` returns an anchor address either way; `SoundMonitorSidParser().detect()`
+then classifies the tune as `DIRECT` (found as loaded) or, via the base library's
+init emulation, `RELOCATED`/`PACKED`. `parse()` emulates init when the song tables
+are not decodable in the directly loaded image (a relocating build).
 
 ## Data-region base
 
@@ -53,6 +57,12 @@ Layout, in byte offsets from the data base:
 volume-ramp config, `[5]` base-volume nibble, `[6..13]` an 8-entry arp-note
 table. Each section has three per-voice pattern streams.
 
+The played section range is `sec_start .. sec_last` (inclusive, wrapping mod
+256). Those bounds are player globals, so rather than walk the pointer table into
+the `MAX_SECTIONS` cap the reader recovers them from the section-advance code's
+own `CPX sec_last` / `LDX sec_start` operands (two adjacent globals), and picks
+the base + bounds combination that decodes the largest run of valid sections.
+
 **Pattern stream** = a flat array of 2-byte `[note][ctrl]` rows. `note == $00` is
 a rest, `note == $80` a tie/hold; otherwise `note` bit7 is the new-note key-on
 trigger and bits0-6 a freq-table index. `ctrl` bits: 0-3 instrument index, bit4
@@ -66,8 +76,11 @@ vibrato period/dir, `14` vibrato delay, `15` detune. Byte `16` is a marker: if
 not `$FF`, an 8-byte global-filter tail (`vol/mode, res/filt, cutoff-hi,
 up-dwell, down-dwell, step, bound, flags`) follows (24-byte record stride).
 
-**Note-frequency tables** = two parallel per-semitone tables (freq hi then lo);
-the hi table is an octave ramp and is located by that content signature.
+**Note-frequency tables** = two parallel per-semitone tables (freq hi then lo,
+95 entries each, abutting). The player reads them with paired `LDA NoteFreqHi,X`
+/ `LDA NoteFreqLo,X`, so they are located relocation-tolerantly from those two
+absolute-indexed operands (their difference is the table length) validated by the
+hi table's octave-ramp signature.
 
 ## Scope
 
