@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Download Soundmonitor ``.sid`` test tunes into a gitignored cache.
+
+Soundmonitor tunes are HVSC copyright works and are **never** committed (see
+``.gitignore``). They are fetched on demand from a public HVSC mirror into
+``tests/.tunecache/`` (gitignored), honouring a local HVSC tree via ``$HVSC``
+first, so a fresh clone obtains them with no machine-specific paths. The
+offline suite uses synthetic fixtures; the real-tune test skips cleanly when a
+tune cannot be fetched.
+
+Usage::
+
+    python scripts/fetch_tunes.py            # fetch every test tune
+    python scripts/fetch_tunes.py --list     # print id -> HVSC path
+
+Programmatic::
+
+    from fetch_tunes import fetch, TUNES
+    sid_path = fetch(TUNES["only3"])
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+CACHE = Path(
+    os.environ.get("SOUNDMONITOR_TUNECACHE", str(REPO / "tests" / ".tunecache"))
+)
+
+# Public HVSC mirror. Override with ``$HVSC_MIRROR``; the relative HVSC path is
+# appended verbatim.
+MIRROR = os.environ.get("HVSC_MIRROR", "https://hvsc.brona.dk/HVSC/C64Music").rstrip(
+    "/"
+)
+
+# id -> HVSC relative path (the Soundmonitor reference tune).
+TUNES = {
+    "only3": "MUSICIANS/J/JAP/Only_3.sid",
+}
+
+
+def _is_sid(data: bytes) -> bool:
+    return data[:4] in (b"PSID", b"RSID")
+
+
+def fetch(relpath: str, *, force: bool = False) -> Path:
+    """Fetch ``relpath`` from the HVSC mirror into the cache; return its path.
+
+    Honours a local HVSC tree via ``$HVSC`` (copied into the cache) before
+    hitting the network, so a developer with a local mirror needs no download.
+    """
+    relpath = relpath.lstrip("/")
+    dest = CACHE / relpath
+    if dest.exists() and not force:
+        return dest
+    local = os.environ.get("HVSC")
+    if local and (Path(local) / relpath).exists():
+        data = (Path(local) / relpath).read_bytes()
+    else:
+        url = f"{MIRROR}/{relpath}"
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "pysoundmonitor/fetch_tunes"}
+        )
+        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 (https)
+            data = resp.read()
+    if not _is_sid(data):
+        raise RuntimeError("%s: not a SID file (magic %r)" % (relpath, data[:4]))
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    return dest
+
+
+def main(argv=None) -> int:
+    """CLI entry point."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--id", help="only this tune id")
+    parser.add_argument("--force", action="store_true", help="re-download")
+    parser.add_argument("--list", action="store_true", help="print id -> path")
+    args = parser.parse_args(argv)
+    if args.list:
+        for tid, rel in TUNES.items():
+            print("%s\t%s" % (tid, rel))
+        return 0
+    for tid in [args.id] if args.id else list(TUNES):
+        print("%s: %s -> %s" % (tid, TUNES[tid], fetch(TUNES[tid], force=args.force)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
