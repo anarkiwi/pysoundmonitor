@@ -25,10 +25,20 @@ jobs:
         run: black --check src/pysoundmonitor tests
       - name: pylint
         run: pylint src/pysoundmonitor tests
+      - name: Cache HVSC test tunes
+        # HVSC tunes are copyright works and are NEVER committed; they are
+        # fetched from the HVSC mirror into the gitignored tunecache and cached
+        # here across runs, keyed on the corpus list + fetch script.
+        uses: actions/cache@v4
+        with:
+          path: tests/.tunecache
+          key: hvsc-tunecache-${{ hashFiles('tests/test_corpus.py', 'scripts/fetch_tunes.py', 'tests/helpers.py') }}
+          restore-keys: |
+            hvsc-tunecache-
       - name: pytest + coverage (> 85%)
-        # Tunes are HVSC copyright works (never committed); the suite runs
-        # OFFLINE against synthetic Soundmonitor-format fixtures. Any real-tune
-        # test fetches from the HVSC mirror and skips cleanly when unreachable.
+        # Synthetic Soundmonitor-format fixtures run offline; the HVSC corpus
+        # tests FETCH their tunes from the HVSC mirror (cached above) and run.
+        # An individual tune skips only if genuinely unreachable after retries.
         run: pytest --cov=pysoundmonitor --cov-report=term-missing --cov-fail-under=85
 
   build:
