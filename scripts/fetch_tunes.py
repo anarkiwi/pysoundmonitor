@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -42,9 +44,31 @@ TUNES = {
     "only3": "MUSICIANS/J/JAP/Only_3.sid",
 }
 
+# Network fetch retries + backoff (a tune is skipped only if genuinely
+# unreachable after these attempts). Overridable for tests.
+RETRIES = int(os.environ.get("HVSC_FETCH_RETRIES", "4"))
+BACKOFF = float(os.environ.get("HVSC_FETCH_BACKOFF", "1.0"))
+
 
 def _is_sid(data: bytes) -> bool:
     return data[:4] in (b"PSID", b"RSID")
+
+
+def _download(url: str) -> bytes:
+    """GET ``url`` with a few retries and small linear backoff."""
+    req = urllib.request.Request(
+        url, headers={"User-Agent": "pysoundmonitor/fetch_tunes"}
+    )
+    last: Exception | None = None
+    for attempt in range(RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 (https)
+                return resp.read()
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+            last = exc
+            if attempt + 1 < RETRIES:
+                time.sleep(BACKOFF * (attempt + 1))
+    raise RuntimeError("%s: unreachable after %d attempts: %s" % (url, RETRIES, last))
 
 
 def fetch(relpath: str, *, force: bool = False) -> Path:
@@ -61,12 +85,7 @@ def fetch(relpath: str, *, force: bool = False) -> Path:
     if local and (Path(local) / relpath).exists():
         data = (Path(local) / relpath).read_bytes()
     else:
-        url = f"{MIRROR}/{relpath}"
-        req = urllib.request.Request(
-            url, headers={"User-Agent": "pysoundmonitor/fetch_tunes"}
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 (https)
-            data = resp.read()
+        data = _download(f"{MIRROR}/{relpath}")
     if not _is_sid(data):
         raise RuntimeError("%s: not a SID file (magic %r)" % (relpath, data[:4]))
     dest.parent.mkdir(parents=True, exist_ok=True)

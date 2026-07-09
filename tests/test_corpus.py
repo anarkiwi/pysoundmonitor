@@ -1,4 +1,4 @@
-"""Real HVSC Soundmonitor corpus test (skips cleanly when HVSC is absent).
+"""Real HVSC Soundmonitor corpus test (fetches tunes on demand).
 
 A deterministic, representative sample of real HVSC Soundmonitor tunes -- spread
 across DEMOS/MUSICIANS, authors A-Z, load addresses ($A000 Hulsbeck/64'er builds
@@ -7,8 +7,10 @@ The sample was drawn deterministically from the tunes ``sidid`` classifies as
 Soundmonitor in the local HVSC tree.
 
 Tunes are HVSC copyright works and are **never** committed; each is fetched +
-cached on demand (honouring ``$HVSC``), and the whole module SKIPS when the local
-tree is not present so CI stays offline. It RUNS for real against ``$HVSC``.
+cached on demand (honouring ``$HVSC`` first, else the HVSC mirror) into the
+gitignored ``tests/.tunecache``. The tests RUN whenever the source is reachable
+(as in CI, against the mirror); an INDIVIDUAL tune skips only if it is genuinely
+unreachable after retries.
 
 Each tune must:
   * ``parse``/``read`` into a :class:`~pysoundmonitor.model.Song`;
@@ -20,7 +22,6 @@ Each tune must:
     own operands, not a walk that runs a relocation-dependent table into the cap).
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -79,24 +80,12 @@ CORPUS = (
 )
 
 
-def _corpus_available() -> bool:
-    """True when the real corpus can be obtained without hitting the network."""
-    if os.environ.get("HVSC"):
-        return True
-    return (fetch_tunes.CACHE / CORPUS[0]).exists()
-
-
-pytestmark = pytest.mark.skipif(
-    not _corpus_available(),
-    reason="HVSC tree unavailable (set $HVSC to run the real corpus test)",
-)
-
-
 def _fetch(rel: str) -> str:
+    """Fetch a corpus tune ($HVSC first, else mirror); skip only if unreachable."""
     try:
         return str(fetch_tunes.fetch(rel))
     except Exception as exc:  # pylint: disable=broad-except
-        pytest.skip(f"corpus tune unavailable: {rel}: {exc}")
+        pytest.skip(f"corpus tune unavailable after retries: {rel}: {exc}")
         return ""
 
 
