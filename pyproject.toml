@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pysoundmonitor"
-version = "0.1.0"
+version = "0.2.0"
 description = "Pure-Python reader and detector for Soundmonitor (64'er / Hulsbeck) SID tunes"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,14 +20,10 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.4",
-    "numpy>=1.23",
+    "pysidtracker>=0.5",
 ]
 
 [project.optional-dependencies]
-# Relocating/packed Soundmonitor tunes have their init routine emulated in
-# py65 so the song tables land in place; direct-load tunes decode with stdlib.
-emu = ["pysidtracker[emu]>=0.4"]
 dev = [
     "black>=24",
     "py65>=1.1",
