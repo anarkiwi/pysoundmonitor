@@ -21,14 +21,14 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.1",
+    "pysidtracker>=0.3",
     "numpy>=1.23",
 ]
 
 [project.optional-dependencies]
 # Relocating/packed Soundmonitor tunes have their init routine emulated in
 # py65 so the song tables land in place; direct-load tunes decode with stdlib.
-emu = ["pysidtracker[emu]"]
+emu = ["pysidtracker[emu]>=0.3"]
 dev = [
     "black>=24",
     "py65>=1.1",

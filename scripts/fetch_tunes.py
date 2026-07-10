@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Download Soundmonitor ``.sid`` test tunes into a gitignored cache.
 
-Soundmonitor tunes are HVSC copyright works and are **never** committed (see
-``.gitignore``). They are fetched on demand from a public HVSC mirror into
-``tests/.tunecache/`` (gitignored), honouring a local HVSC tree via ``$HVSC``
-first, so a fresh clone obtains them with no machine-specific paths. The
-offline suite uses synthetic fixtures; the real-tune test skips cleanly when a
-tune cannot be fetched.
+Thin wrapper over :mod:`pysidtracker.testing`: the shared "resolve from a local
+HVSC tree, else a gitignored cache, else download from a mirror" core is reused
+here. Soundmonitor tunes are HVSC copyright works and are **never** committed
+(see ``.gitignore``); they are fetched on demand into ``tests/.tunecache/``
+(gitignored), honouring a local HVSC tree via ``$HVSC`` first. The offline suite
+uses synthetic fixtures; the real-tune test skips cleanly when a tune cannot be
+fetched.
 
 Usage::
 
@@ -23,74 +24,49 @@ from __future__ import annotations
 
 import argparse
 import os
-import time
-import urllib.error
-import urllib.request
 from pathlib import Path
+
+from pysidtracker.testing import (
+    DEFAULT_MIRROR,
+    TuneFetchError,
+    fetch_tune,
+    resolve_tune,
+)
 
 REPO = Path(__file__).resolve().parent.parent
 CACHE = Path(
     os.environ.get("SOUNDMONITOR_TUNECACHE", str(REPO / "tests" / ".tunecache"))
 )
 
-# Public HVSC mirror. Override with ``$HVSC_MIRROR``; the relative HVSC path is
-# appended verbatim.
-MIRROR = os.environ.get("HVSC_MIRROR", "https://hvsc.brona.dk/HVSC/C64Music").rstrip(
-    "/"
-)
+# Public HVSC mirror. Override with ``$HVSC_MIRROR`` (honoured inside the shared
+# fetch core); kept here for back-compat.
+MIRROR = os.environ.get("HVSC_MIRROR", DEFAULT_MIRROR).rstrip("/")
 
 # id -> HVSC relative path (the Soundmonitor reference tune).
 TUNES = {
     "only3": "MUSICIANS/J/JAP/Only_3.sid",
 }
 
-# Network fetch retries + backoff (a tune is skipped only if genuinely
-# unreachable after these attempts). Overridable for tests.
+# Network fetch retries (a tune is skipped only if genuinely unreachable after
+# these attempts). Overridable for tests.
 RETRIES = int(os.environ.get("HVSC_FETCH_RETRIES", "4"))
-BACKOFF = float(os.environ.get("HVSC_FETCH_BACKOFF", "1.0"))
-
-
-def _is_sid(data: bytes) -> bool:
-    return data[:4] in (b"PSID", b"RSID")
-
-
-def _download(url: str) -> bytes:
-    """GET ``url`` with a few retries and small linear backoff."""
-    req = urllib.request.Request(
-        url, headers={"User-Agent": "pysoundmonitor/fetch_tunes"}
-    )
-    last: Exception | None = None
-    for attempt in range(RETRIES):
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310 (https)
-                return resp.read()
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
-            last = exc
-            if attempt + 1 < RETRIES:
-                time.sleep(BACKOFF * (attempt + 1))
-    raise RuntimeError("%s: unreachable after %d attempts: %s" % (url, RETRIES, last))
 
 
 def fetch(relpath: str, *, force: bool = False) -> Path:
     """Fetch ``relpath`` from the HVSC mirror into the cache; return its path.
 
-    Honours a local HVSC tree via ``$HVSC`` (copied into the cache) before
-    hitting the network, so a developer with a local mirror needs no download.
+    Honours a local HVSC tree via ``$HVSC`` and the gitignored cache before
+    hitting the network. Raises :class:`TuneFetchError` if the tune is genuinely
+    unreachable.
     """
-    relpath = relpath.lstrip("/")
-    dest = CACHE / relpath
-    if dest.exists() and not force:
-        return dest
-    local = os.environ.get("HVSC")
-    if local and (Path(local) / relpath).exists():
-        data = (Path(local) / relpath).read_bytes()
-    else:
-        data = _download(f"{MIRROR}/{relpath}")
-    if not _is_sid(data):
-        raise RuntimeError("%s: not a SID file (magic %r)" % (relpath, data[:4]))
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_bytes(data)
-    return dest
+    if force:
+        return fetch_tune(
+            relpath, cache_dir=CACHE, mirror=MIRROR, retries=RETRIES, force=True
+        )
+    path = resolve_tune(relpath, cache_dir=CACHE)
+    if path is None:
+        raise TuneFetchError("%s: unreachable after %d attempts" % (relpath, RETRIES))
+    return path
 
 
 def main(argv=None) -> int:
