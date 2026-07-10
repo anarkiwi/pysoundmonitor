@@ -15,9 +15,16 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Set
 
-import numpy as np
-
-from pysidtracker import SidImage, read_bytes
+from pysidtracker import (
+    EmulatorUnavailable,
+    SidImage,
+    find_code_all,
+    read_bytes,
+    run_init,
+)
+from pysidtracker import SidParseError as BaseSidParseError
+from pysidtracker import locate_note_freq as _base_locate_note_freq
+from pysidtracker.image import MEM_SIZE
 
 from . import constants as c
 from .errors import SidParseError
@@ -30,13 +37,12 @@ def _operand_targets(image: SidImage, opcode: int) -> Dict[int, int]:
     An absolute-addressed 6502 instruction is ``opcode lo hi``; this returns
     ``{lo | hi<<8: site_address}`` for every occurrence, letting a relocatable
     player's own table/global addresses be recovered from its code operands.
+    Scans the whole 64 KiB image via the shared masked code-fragment matcher.
     """
-    mem = np.frombuffer(bytes(image.mem), dtype=np.uint8)
-    sites = np.nonzero(mem[:-2] == opcode)[0]
+    pattern = f"{opcode:02X} {{target:w}}"
     targets: Dict[int, int] = {}
-    for site in sites.tolist():
-        target = int(mem[site + 1]) | (int(mem[site + 2]) << 8)
-        targets.setdefault(target, site)
+    for match in find_code_all(bytes(image.mem), pattern):
+        targets.setdefault(match.captures["target"], match.addr)
     return targets
 
 
@@ -125,7 +131,7 @@ def _section_ok(image: SidImage, base: int, index: int) -> bool:
     header = image.ptr(
         base + c.SECTION_HEADER_PTR_LO, base + c.SECTION_HEADER_PTR_HI, index
     )
-    if not _in_image(image, header):
+    if not image.contains(header):
         return False
     patlen = image.peek(header + c.SH_PATLEN)
     if patlen == 0 or patlen > c.MAX_PATTERN_LEN:
@@ -134,7 +140,7 @@ def _section_ok(image: SidImage, base: int, index: int) -> bool:
         stream = image.ptr(
             base + c.VOICE_PTR_LO[voice], base + c.VOICE_PTR_HI[voice], index
         )
-        if not _in_image(image, stream):
+        if not image.contains(stream):
             return False
     return True
 
@@ -173,10 +179,6 @@ def _recover_base(image: SidImage) -> int:
     return _plan(image)[0]
 
 
-def _in_image(image: SidImage, addr: int) -> bool:
-    return image.load <= addr < image.end
-
-
 def _decode_stream(image: SidImage, addr: int, rows: int) -> List[Row]:
     out: List[Row] = []
     rows = min(rows, c.MAX_PATTERN_LEN)
@@ -190,7 +192,7 @@ def _decode_section(image: SidImage, base: int, index: int) -> Optional[Section]
     header = image.ptr(
         base + c.SECTION_HEADER_PTR_LO, base + c.SECTION_HEADER_PTR_HI, index
     )
-    if not _in_image(image, header):
+    if not image.contains(header):
         return None
     patlen = image.peek(header + c.SH_PATLEN)
     if patlen == 0 or patlen > c.MAX_PATTERN_LEN:
@@ -205,7 +207,7 @@ def _decode_section(image: SidImage, base: int, index: int) -> Optional[Section]
         stream = image.ptr(
             base + c.VOICE_PTR_LO[voice], base + c.VOICE_PTR_HI[voice], index
         )
-        if not _in_image(image, stream):
+        if not image.contains(stream):
             return None
         voices.append(_decode_stream(image, stream, patlen))
         transpose.append(image.peek(base + c.VOICE_XPOSE[voice] + index))
@@ -259,7 +261,7 @@ def _decode_instruments(
     table = base + c.INSTRUMENTS
     for index in indices:
         addr = table + index * c.INSTRUMENT_STRIDE
-        if not _in_image(image, addr):
+        if not image.contains(addr):
             continue
         record = image.slice(addr, c.INSTRUMENT_STRIDE)
         out.append(Instrument.from_record(index, record))
@@ -275,74 +277,38 @@ def decode_note_freq(
     return NoteFreqTable(hi=hi, lo=lo, addr=addr)
 
 
-def _valid_freq_hi(image: SidImage, addr: int, length: int) -> bool:
-    """Is ``[addr, addr+length)`` a valid note-freq hi octave ramp?"""
-    if addr < 0 or addr + length > len(image.mem):
-        return False
-    hi = np.frombuffer(image.slice(addr, length), dtype=np.uint8).astype(np.int16)
-    if hi[0] == 0 or hi[0] > c.NOTE_FREQ_HI_START_MAX:
-        return False
-    if hi[-1] < c.NOTE_FREQ_HI_END_MIN:
-        return False
-    diffs = np.diff(hi)
-    if not bool((diffs >= 0).all()):
-        return False
-    return int((diffs > 0).sum()) >= c.NOTE_FREQ_MIN_STEPS
-
-
-def _find_note_freq(image: SidImage) -> Optional[tuple]:
-    """Locate the note-freq tables from the player's paired ``LDA`` operands.
-
-    The player reads ``LDA NoteFreqHi,X`` and ``LDA NoteFreqLo,X``; the two
-    absolute-indexed operands abut (``lo = hi + length``), so a pair of
-    ``LDA abs,X`` targets that differ by a candidate table length and whose hi
-    table is a valid octave ramp pins the tables regardless of relocation.
-    Returns ``(hi_addr, length)`` or ``None``.
-    """
-    targets = set(_operand_targets(image, c.LDA_ABSX))
-    for hi_addr in sorted(targets):
-        for length in c.NOTE_FREQ_LENGTHS:
-            if hi_addr + length not in targets:
-                continue
-            if _valid_freq_hi(image, hi_addr, length):
-                return (hi_addr, length)
-    return None
-
-
-def _find_note_freq_addr(image: SidImage) -> Optional[int]:
-    found = _find_note_freq(image)
-    return found[0] if found is not None else None
-
-
 def locate_note_freq(image: SidImage) -> Optional[NoteFreqTable]:
     """Locate and decode the note-frequency tables, or ``None``.
 
-    Uses the relocation-tolerant paired-operand locator (:func:`_find_note_freq`);
-    returns ``None`` only when the player carries no such table pair.
+    Delegates to the shared relocation-tolerant paired-operand locator
+    (:func:`pysidtracker.locate_note_freq`): it finds the ``LDA hi,X`` /
+    ``LDA lo,X`` operand pair whose targets differ by a table length and whose
+    hi table is a valid octave ramp. Returns ``None`` when no such pair exists.
     """
-    found = _find_note_freq(image)
-    if found is None:
-        return None
-    hi_addr, length = found
-    return decode_note_freq(image, hi_addr, length)
+    return _base_locate_note_freq(image)
+
+
+def _find_note_freq_addr(image: SidImage) -> Optional[int]:
+    table = locate_note_freq(image)
+    return table.addr if table is not None else None
 
 
 def _run_init(image: SidImage) -> bool:
     """Emulate the tune's init so a packed/relocating player lands in memory.
 
     Returns ``True`` if init ran. A no-op (returns ``False``) for a bare ``.prg``
-    with no header, or when the optional emulator dependency is unavailable.
+    with no header, or if the base emulator cannot run init. ``run_init`` raises
+    the BASE :class:`SidParseError` (no init address) or
+    :class:`EmulatorUnavailable` (``py65`` missing); both are caught here so a
+    tune that cannot be unpacked simply decodes from its directly loaded image.
     """
     if image.header is None:
         return False
     try:
-        from pysidtracker import run_init
-        from pysidtracker.image import MEM_SIZE
-
         run_init(image)
         image.end = MEM_SIZE
         return True
-    except SidParseError:
+    except (EmulatorUnavailable, BaseSidParseError):
         return False
 
 

@@ -11,14 +11,17 @@ copyrightable expression.
 
 from __future__ import annotations
 
+from pysidtracker.registers import CIA1_TIMER_A_HI, CIA1_TIMER_A_LO, STA_ABS
+
 # --- Recognizer fingerprint (relocation-invariant) --------------------------
 # Soundmonitor is CIA-timed and programs its OWN play period: the section loader
 # reads the CIA-1 Timer-A latch from the per-section header and writes it to the
 # fixed hardware registers $DC04/$DC05, guarding the hi byte with ``CMP #$06``.
 # These target absolute hardware addresses that never relocate, so the sequence
-# is a load-address-independent signature of the engine.
-STA_DC04 = bytes((0x8D, 0x04, 0xDC))  # STA $DC04  (Timer-A latch lo)
-STA_DC05 = bytes((0x8D, 0x05, 0xDC))  # STA $DC05  (Timer-A latch hi)
+# is a load-address-independent signature of the engine. The store bytes are
+# built from the base register map (``STA <abs>`` targeting the CIA-1 timer).
+STA_DC04 = bytes((STA_ABS, CIA1_TIMER_A_LO & 0xFF, CIA1_TIMER_A_LO >> 8))
+STA_DC05 = bytes((STA_ABS, CIA1_TIMER_A_HI & 0xFF, CIA1_TIMER_A_HI >> 8))
 CMP_06 = bytes((0xC9, 0x06))  # CMP #$06   (hi-latch guard)
 # Max byte gap between the two CIA stores for the fingerprint to match.
 FINGERPRINT_WINDOW = 0x10
@@ -130,15 +133,7 @@ MAX_PATTERN_LEN = 256
 # --- Note-frequency tables --------------------------------------------------
 # Two parallel u8 tables (freq hi, then freq lo) of one entry per semitone; the
 # hi table is an octave ramp (non-decreasing, doubling per octave). The lo table
-# starts exactly ``NOTE_FREQ_LEN`` bytes after the hi table (the two tables abut,
-# and the player reads ``LDA NoteFreqHi,X`` / ``LDA NoteFreqLo,X`` -- adjacent
-# absolute-indexed operands whose difference IS the table length). On real HVSC
-# tunes the tables are 95 entries (the hi ramp climbs 01..f8 over indices 0..94).
+# starts exactly ``NOTE_FREQ_LEN`` bytes after the hi table. Location, ramp
+# validation, and candidate lengths are delegated to ``pysidtracker.notefreq``.
+# On real HVSC tunes the tables are 95 entries (the hi ramp climbs 01..f8).
 NOTE_FREQ_LEN = 95
-# Candidate table lengths tried (largest valid wins) when the pair is located
-# from the player's paired ``LDA`` operands.
-NOTE_FREQ_LENGTHS = (96, 95)
-# Content signature used to validate a candidate hi table.
-NOTE_FREQ_HI_START_MAX = 0x04  # first hi byte is small (low octave)
-NOTE_FREQ_HI_END_MIN = 0x20  # last hi byte has climbed into the high octaves
-NOTE_FREQ_MIN_STEPS = 6  # at least this many upward steps across the ramp

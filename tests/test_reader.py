@@ -2,11 +2,12 @@
 
 import pytest
 
-from pysidtracker import SidImage
+from pysidtracker import EmulatorUnavailable, SidImage
 
 import helpers
 from pysoundmonitor import SidParseError, parse, read
 from pysoundmonitor import constants as c
+from pysoundmonitor import reader
 from pysoundmonitor.reader import (
     _recover_base,
     _run_init,
@@ -132,6 +133,20 @@ def test_run_init_with_header_runs():
     image = SidImage.from_bytes(data)
     assert _run_init(image) is True
     assert image.end == 0x10000
+
+
+def test_run_init_emulator_unavailable_is_noop(monkeypatch):
+    # py65 is a required dependency, but if the base emulator is unavailable
+    # run_init raises the BASE EmulatorUnavailable; _run_init must catch it and
+    # fall back to decoding the directly loaded image.
+    data, _ = helpers.build_sid()
+    image = SidImage.from_bytes(data)
+
+    def _boom(_image):
+        raise EmulatorUnavailable("py65 missing")
+
+    monkeypatch.setattr(reader, "run_init", _boom)
+    assert _run_init(image) is False
 
 
 def test_decode_note_freq_direct():

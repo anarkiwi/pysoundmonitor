@@ -11,6 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+from pysidtracker import NoteFreqTable
+
 from . import constants as c
 
 
@@ -174,19 +176,6 @@ class Section:
     def cadence(self) -> int:
         """Play period in CPU cycles per call (``CIA latch + 1``)."""
         return self.cia_latch + 1
-
-
-@dataclass
-class NoteFreqTable:
-    """The parallel note-frequency hi/lo tables (one entry per semitone)."""
-
-    hi: List[int]
-    lo: List[int]
-    addr: Optional[int] = None
-
-    def freq(self, index: int) -> int:
-        """16-bit SID frequency for semitone ``index``."""
-        return (self.hi[index] << 8) | self.lo[index]
 
 
 @dataclass
