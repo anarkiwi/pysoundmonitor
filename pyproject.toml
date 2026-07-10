@@ -7,28 +7,27 @@ name = "pysoundmonitor"
 version = "0.1.0"
 description = "Pure-Python reader and detector for Soundmonitor (64'er / Hulsbeck) SID tunes"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [{ name = "Josh Bailey" }]
 keywords = ["sid", "c64", "soundmonitor", "hulsbeck", "tracker", "chiptune"]
 classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.3",
+    "pysidtracker>=0.4",
     "numpy>=1.23",
 ]
 
 [project.optional-dependencies]
 # Relocating/packed Soundmonitor tunes have their init routine emulated in
 # py65 so the song tables land in place; direct-load tunes decode with stdlib.
-emu = ["pysidtracker[emu]>=0.3"]
+emu = ["pysidtracker[emu]>=0.4"]
 dev = [
     "black>=24",
     "py65>=1.1",
@@ -61,7 +60,7 @@ show_missing = true
 
 [tool.black]
 line-length = 88
-target-version = ["py310"]
+target-version = ["py311"]
 
 [tool.pylint.main]
 disable = "all"
