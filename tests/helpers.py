@@ -163,3 +163,60 @@ def build_no_fingerprint():
     """A valid-looking PSID whose image carries no engine fingerprint."""
     payload = bytes(0x200)
     return _psid(payload, 0x1000, 0x1000, 0x1020)
+
+
+def build_playable_sid(load=0x1000):
+    """A minimal PSID with REAL 6502 init/play the player can run offline.
+
+    ``init`` seeds volume and a RAM counter; ``play`` samples the VIC raster and
+    the voice-3 SID read-back (exercising the player's read observers), bumps the
+    counter and writes it to voice-1/voice-2 frequency, so successive frames
+    yield a changing SID register grid. Pure functional 6502 -- no copyrighted
+    engine bytes.
+    """
+    counter = load + 0x02  # RAM cell just past the load address
+    init = load + 0x10
+    play = load + 0x20
+    end = load + 0x40
+    body = bytearray(end - load)
+    init_code = bytes(
+        (
+            0xA9,
+            0x0F,
+            0x8D,
+            0x18,
+            0xD4,
+            0xA9,
+            0x00,
+            0x8D,
+            counter & 0xFF,
+            counter >> 8,
+            0x60,
+        )
+    )
+    play_code = bytes(
+        (
+            0xAD,
+            0x12,
+            0xD0,  # LDA $D012 (VIC raster read observer)
+            0xAD,
+            0x1B,
+            0xD4,  # LDA $D41B (voice-3 osc read observer)
+            0xEE,
+            counter & 0xFF,
+            counter >> 8,  # INC counter
+            0xAD,
+            counter & 0xFF,
+            counter >> 8,  # LDA counter
+            0x8D,
+            0x00,
+            0xD4,  # STA $D400 (voice-1 freq lo)
+            0x8D,
+            0x07,
+            0xD4,  # STA $D407 (voice-2 freq lo)
+            0x60,  # RTS
+        )
+    )
+    body[init - load : init - load + len(init_code)] = init_code
+    body[play - load : play - load + len(play_code)] = play_code
+    return _psid(bytes(body), load, init, play)
