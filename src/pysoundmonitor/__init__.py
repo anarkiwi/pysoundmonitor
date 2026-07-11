@@ -1,10 +1,11 @@
-"""Pure-Python reader and detector for Soundmonitor (64'er / Hulsbeck) SID tunes.
+"""Pure-Python player, reader and detector for Soundmonitor (64'er / Hulsbeck).
 
-Soundmonitor is HVSC tracker #6. Its player is relocatable and the SID-header
-addresses are not a reliable locator, so this package finds the engine by a
-small hardware-register fingerprint and decodes the documented section->stream
-song-data structures into a :class:`Song` model. Scope is the container/detection
-plus a song-data reader -- not a byte-exact playback engine.
+Soundmonitor is HVSC tracker #6. Its replay is relocatable and the SID-header
+addresses are not a reliable locator, so this package finds the engine by a small
+hardware-register fingerprint and decodes the documented section->stream song
+structures into a :class:`Song` model. :class:`SoundMonitorPlayer` reproduces the
+replay byte-exact (validated against the ``sidtrace`` oracle) by running the
+tune's own 6502 ``init``/``play`` over the shared :class:`~pysidtracker.MemPlayer`.
 """
 
 from .errors import SidParseError, SoundMonitorError
@@ -16,10 +17,10 @@ from .model import (
     Section,
     Song,
 )
+from .player import SoundMonitorPlayer, SoundMonitorSidParser
 from .reader import find_fingerprint, parse, read
-from .sidparser import SoundMonitorSidParser
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "FilterTail",
@@ -30,6 +31,7 @@ __all__ = [
     "SidParseError",
     "Song",
     "SoundMonitorError",
+    "SoundMonitorPlayer",
     "SoundMonitorSidParser",
     "__version__",
     "find_fingerprint",

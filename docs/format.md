@@ -8,9 +8,8 @@ reproduced here.
 
 Soundmonitor (64'er / Chris Hulsbeck) is HVSC tracker #6. `pysoundmonitor`
 decodes the container, the detection anchor, and the section→stream song-data
-structures into a model. A byte-exact per-frame playback engine is intentionally
-out of scope: reproducing it faithfully would require material derived from the
-copyrighted player.
+structures into a model, and plays a tune byte-exact via `SoundMonitorPlayer`
+(see [Player and playback](#player-and-playback-notes)).
 
 ## Container and detection notes
 
@@ -94,11 +93,39 @@ hi table's octave-ramp signature.
 
 ## Player and playback notes
 
-`pysoundmonitor` decodes the container, detection anchor, and song-data
-structures into a model. A byte-exact per-frame playback engine is intentionally
-out of scope: reproducing it faithfully would require material derived from the
-copyrighted player. Cadence is exposed per section (`latch + 1` cycles/call) and
-via `song.cia_latch` for the CIA-timed builds.
+`SoundMonitorPlayer` is a [`pysidtracker.MemPlayer`](https://github.com/anarkiwi/pysidtracker)
+subclass that reproduces the replay byte-exact. Rather than re-transcribe the
+copyrighted, relocatable player for each build, it runs the tune's **own** 6502
+`init`/`play` over the shared 64 KiB memory image (with the VIC-raster and
+voice-3 SID read-back observers the replay samples), reading back the SID
+register file each frame:
+
+```python
+from pysoundmonitor import SoundMonitorPlayer
+
+player = SoundMonitorPlayer(open("tune.sid", "rb").read())
+grid = player.render_grid(250)               # 25-reg, forward-filled per frame
+writes = list(player.register_writes(250))   # pysidtracker RegWrite log
+player.render_wav("tune.wav", 250)           # needs the `audio` extra
+```
+
+Both replay variations are reproduced and validated: the **CIA-timed** cohort
+(self-scheduled cadence via the `$DC04`/`$DC05` latch, e.g. `Only_3`, `Defu`,
+`Charts`) and the **fixed-cadence** PAL-video cohort (e.g. `Fi`, `Big_Boing`,
+`Into_Orbit`), across directly loaded `$A000` and relocated `$6xxx`/`$9xxx`
+builds. `SoundMonitorPlayer.cadence` derives the play period from what init
+programs; per-section cadence is also exposed on the model (`latch + 1`
+cycles/call, and `song.cia_latch`).
+
+### Oracle testing
+
+`tests/test_oracle_hvsc.py` renders each covered HVSC tune with
+`SoundMonitorPlayer` and asserts the per-frame SID register grid matches the
+[`sidtrace`](https://github.com/anarkiwi/sidtrace) `sidplayfp` oracle frame for
+frame (`pysidtracker.make_oracle_fixtures`). It is `oracle`-marked and runs in a
+dedicated CI job (`pytest -m oracle`) with Docker; HVSC `.sid` files are
+copyright works, fetched to a cache and never committed. See the base
+[oracle-testing guide](https://github.com/anarkiwi/pysidtracker/blob/main/docs/oracle-testing.md).
 
 ## References
 

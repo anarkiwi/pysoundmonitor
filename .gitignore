@@ -223,3 +223,5 @@ tests/.tunecache/
 *.prg
 *.wav
 *.sidwr.bin
+# Oracle cache: fetched HVSC tunes + derived sidtrace register traces (CI-cached).
+.oracle-cache/
