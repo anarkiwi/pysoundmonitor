@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=83.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -20,22 +20,22 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.6.0",
+    "pysidtracker>=0.9.1",
 ]
 
 [project.optional-dependencies]
 # Audio rendering (SoundMonitorPlayer.render_wav) drives an emulated SID via the
 # base pysidtracker.audio surface; everything else works without it.
-audio = ["pysidtracker[audio]>=0.6.0"]
+audio = ["pysidtracker[audio]>=0.9.1"]
 dev = [
-    "black>=24",
-    "py65>=1.1",
-    "pylint>=3",
-    "pytest>=7",
-    "pytest-cov>=4",
-    "pytest-xdist>=3",
+    "black>=26.5.1",
+    "py65>=1.2.0",
+    "pylint>=4.0.6",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
     # Decompress the sidtrace oracle's zstd CSV traces (oracle comparison tests).
-    "zstandard>=0.21",
+    "zstandard>=0.25.0",
 ]
 
 [project.urls]
