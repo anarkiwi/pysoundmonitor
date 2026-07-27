@@ -32,7 +32,7 @@ from pysidtracker import (
     render_wav,
 )
 from pysidtracker import registers as reg
-from pysidtracker.trace import _run_to_rts
+from pysidtracker.trace import run_to_rts
 
 from .errors import SidParseError
 from .model import Song
@@ -101,10 +101,10 @@ class SoundMonitorPlayer(MemPlayer):
 
     def _init(self, subtune: int) -> None:
         self._mpu, self._obs = self._make_cpu()
-        _run_to_rts(self._mpu, self._obs, self._init_address, subtune, self._max_cycles)
+        run_to_rts(self._mpu, self._obs, self._init_address, subtune, self._max_cycles)
 
     def _frame(self) -> None:
-        _run_to_rts(self._mpu, self._obs, self._play_address, 0, self._max_cycles)
+        run_to_rts(self._mpu, self._obs, self._play_address, 0, self._max_cycles)
 
     def snapshot(self) -> List[int]:
         """SID register file with the pulse-width-high nibbles masked.
