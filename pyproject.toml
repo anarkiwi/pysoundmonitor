@@ -20,13 +20,13 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.9.1",
+    "pysidtracker>=0.10.1",
 ]
 
 [project.optional-dependencies]
 # Audio rendering (SoundMonitorPlayer.render_wav) drives an emulated SID via the
 # base pysidtracker.audio surface; everything else works without it.
-audio = ["pysidtracker[audio]>=0.9.1"]
+audio = ["pysidtracker[audio]>=0.10.1"]
 dev = [
     "black>=26.5.1",
     "py65>=1.2.0",
