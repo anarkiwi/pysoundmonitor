@@ -299,7 +299,7 @@ def _run_init(image: SidImage) -> bool:
     Returns ``True`` if init ran. A no-op (returns ``False``) for a bare ``.prg``
     with no header, or if the base emulator cannot run init. ``run_init`` raises
     the BASE :class:`SidParseError` (no init address) or
-    :class:`EmulatorUnavailable` (``py65`` missing); both are caught here so a
+    :class:`EmulatorUnavailable` (``jennings`` missing); both are caught here so a
     tune that cannot be unpacked simply decodes from its directly loaded image.
     """
     if image.header is None:

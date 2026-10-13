@@ -1,30 +1,25 @@
-"""Byte-exact Soundmonitor replay as a :class:`~pysidtracker.MemPlayer`.
+"""Byte-exact Soundmonitor replay as a :class:`~pysidtracker.EmuPlayer`.
 
 Soundmonitor's replay is relocatable and drives its cadence from inside the tune
 (the CIA-timed cohort latches ``$DC04``/``$DC05``; the fixed-cadence cohort runs
 off the PAL video frame), so a static transcription would have to re-derive that
-per build. :class:`SoundMonitorPlayer` instead reproduces the replay faithfully
-by running the tune's *own* 6502 ``init`` and ``play`` routines over the shared
-:class:`~pysidtracker.MemPlayer` 64 KiB image: ``_init`` mounts the image and
-runs ``init`` once; ``_frame`` advances one ``play`` call, and the SID register
-file it programs is read back by :meth:`MemPlayer.snapshot`. The per-frame grid
-is validated byte-exact against the ``sidtrace`` oracle (see the oracle test).
-
-All Soundmonitor-specific machinery -- the py65 CPU with the VIC-raster / SID
-read-back observers the replay samples, the run-to-RTS driver, and the cadence
-derivation -- is private to this class. Reading ``.sid``/``.prg`` containers is
-routed through :class:`~pysidtracker.SidImage`; :class:`SoundMonitorSidParser`
-gives the same image the family ``parse``/``detect`` surface.
+per build. :class:`SoundMonitorPlayer` instead runs the tune's *own* 6502
+``init`` and ``play`` routines on pysidtracker's jennings host, one ``play``
+call per frame, with the raster and osc3/env3 reads the replay samples. The
+per-frame grid is validated byte-exact against the ``sidtrace`` oracle (see the
+oracle test). Reading ``.sid``/``.prg`` containers is routed through
+:class:`~pysidtracker.SidImage`; :class:`SoundMonitorSidParser` gives the same
+image the family ``parse``/``detect`` surface.
 """
 
 from __future__ import annotations
 
-from typing import Any, Iterator, List, Optional, Union
+from typing import Any, Iterator, Optional, Union
 
 from pysidtracker import (
     BaseSidParser,
     Cadence,
-    MemPlayer,
+    EmuPlayer,
     RegWrite,
     SidImage,
     playroutine_cadence,
@@ -32,20 +27,15 @@ from pysidtracker import (
     render_wav,
 )
 from pysidtracker import registers as reg
-from pysidtracker.trace import run_to_rts
 
 from .errors import SidParseError
 from .model import Song
 from .reader import find_fingerprint, parse
 
-# The section loader reads $D41B/$D41C (voice-3 oscillator/envelope) for its
-# pseudo-random source; the sidtrace oracle drives those from the elapsed cycle
-# count, so mirror that here for a byte-exact sample.
-_SID_READBACK = (0xD41B, 0xD41C)
 _MAX_CYCLES = 8_000_000
 
 
-class SoundMonitorPlayer(MemPlayer):
+class SoundMonitorPlayer(EmuPlayer):
     """Play a Soundmonitor tune one frame at a time, byte-exact to the oracle.
 
     Constructed from raw ``.sid``/``.prg`` bytes (or a
@@ -66,56 +56,18 @@ class SoundMonitorPlayer(MemPlayer):
         if image.header is None:
             raise SidParseError("cannot play a bare .prg: image has no SID header")
         header = image.header
-        self._max_cycles = max_cycles
-        self._init_address = header.init_address or header.real_load_address
-        self._play_address = header.play_address or self._init_address
-        # Pristine container bytes for the (mutating) cadence trace; the player
-        # runs over its own copy, so the source image stays untouched.
+        init = header.init_address or header.real_load_address
         self._sid_bytes = image.container + image.image
-        self._mpu = None
-        self._obs = None
         self._cadence: Optional[Cadence] = None
-        super().__init__(bytes(image.mem), 0, subtune)
-
-    def _make_cpu(self):
-        """Build the py65 CPU over the image with the replay's read observers."""
-        from py65.devices.mpu6502 import MPU
-        from py65.memory import ObservableMemory
-
-        subject = self._mem
-        obs = ObservableMemory(subject=subject)
-        mpu = MPU(memory=obs)
-
-        def _on_raster(addr):
-            line = (mpu.processorCycles // 63) % 312
-            if addr == reg.VIC_RASTER:
-                return line & 0xFF
-            return (subject[reg.VIC_CONTROL_1] & 0x7F) | (((line >> 8) & 1) << 7)
-
-        def _on_sidread(addr):  # pylint: disable=unused-argument
-            return (mpu.processorCycles >> 3) & 0xFF
-
-        obs.subscribe_to_read([reg.VIC_CONTROL_1, reg.VIC_RASTER], _on_raster)
-        obs.subscribe_to_read(list(_SID_READBACK), _on_sidread)
-        return mpu, obs
-
-    def _init(self, subtune: int) -> None:
-        self._mpu, self._obs = self._make_cpu()
-        run_to_rts(self._mpu, self._obs, self._init_address, subtune, self._max_cycles)
-
-    def _frame(self) -> None:
-        run_to_rts(self._mpu, self._obs, self._play_address, 0, self._max_cycles)
-
-    def snapshot(self) -> List[int]:
-        """SID register file with the pulse-width-high nibbles masked.
-
-        The SID uses only the low nibble of ``$D403``/``$D40A``/``$D411``; the
-        oracle records them masked, so mask here too for a byte-exact grid.
-        """
-        regs = super().snapshot()
-        for pw_hi in reg.PW_HI_REGS:
-            regs[pw_hi] &= 0x0F
-        return regs
+        super().__init__(
+            bytes(image.mem),
+            0,
+            init,
+            header.play_address or init,
+            subtune,
+            max_cycles=max_cycles,
+            sid_model=reg.sid_model_for_flags(header.flags),
+        )
 
     @property
     def cadence(self) -> Cadence:
