@@ -136,14 +136,14 @@ def test_run_init_with_header_runs():
 
 
 def test_run_init_emulator_unavailable_is_noop(monkeypatch):
-    # py65 is a required dependency, but if the base emulator is unavailable
+    # jennings is a required dependency, but if the base emulator is unavailable
     # run_init raises the BASE EmulatorUnavailable; _run_init must catch it and
     # fall back to decoding the directly loaded image.
     data, _ = helpers.build_sid()
     image = SidImage.from_bytes(data)
 
     def _boom(_image):
-        raise EmulatorUnavailable("py65 missing")
+        raise EmulatorUnavailable("jennings missing")
 
     monkeypatch.setattr(reader, "run_init", _boom)
     assert _run_init(image) is False
