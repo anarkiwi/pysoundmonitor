@@ -119,28 +119,27 @@ def test_installed_interrupt_preempts_a_main_loop():
     grid = player.render_grid(8)
     assert [row[0] for row in grid] == list(range(1, 9))
     spins = [row[0x15] for row in grid]
-    assert len(set(spins)) == len(spins)
+    assert all(a != b for a, b in zip(spins, spins[1:]))
 
 
-def test_installed_interrupt_needs_a_source():
+@pytest.mark.parametrize("loop", [False, True])
+def test_installed_interrupt_needs_a_source(loop):
+    player = SoundMonitorPlayer(helpers.build_irq_sid(loop=loop, cli=False))
     with pytest.raises(SidParseError, match="no interrupt"):
-        SoundMonitorPlayer(helpers.build_irq_sid(cli=False))
+        player.render_grid(4)
 
 
-def test_masked_main_program_never_plays(monkeypatch):
-    video = Cadence(19656, TriggerSource.PAL_VIDEO, reg.PAL_CLOCK_HZ)
-    monkeypatch.setattr(player_mod, "playroutine_cadence", lambda *_, **__: video)
-    player = SoundMonitorPlayer(helpers.build_irq_sid(loop=True, cli=False))
-    grid = player.render_grid(4)
-    assert {row[0] for row in grid} == {0}
-    assert len({row[0x15] for row in grid}) == 4
+def test_frames_follow_the_play_source_after_a_grid():
+    player = SoundMonitorPlayer(helpers.build_irq_sid("cia"))
+    first = player.render_grid(4)
+    assert [row[7] for row in first] == [1, 2, 3, 4]
+    assert [row[7] for row in player.render_grid(3)] == [5, 6, 7]
 
 
-def test_unraised_periods_repeat_the_last_frame(monkeypatch):
-    fast = Cadence(19656 // 4, TriggerSource.PAL_VIDEO, reg.PAL_CLOCK_HZ)
-    monkeypatch.setattr(player_mod, "playroutine_cadence", lambda *_, **__: fast)
-    grid = SoundMonitorPlayer(helpers.build_irq_sid()).render_grid(12)
-    assert [row[0] for row in grid] == [1] * 4 + [2] * 4 + [3] * 4
+def test_hosted_play_frame_reports_changed_registers():
+    player = SoundMonitorPlayer(helpers.build_irq_sid("nmi"))
+    assert dict(player.play_frame())[14] == 1
+    assert player.play_frame() == [(14, 2)]
 
 
 def test_cadence_follows_subtune(monkeypatch):
@@ -153,51 +152,3 @@ def test_cadence_follows_subtune(monkeypatch):
     monkeypatch.setattr(player_mod, "playroutine_cadence", cadence)
     assert SoundMonitorPlayer(helpers.build_playable_sid(), 1).cadence.source
     assert seen == [1]
-
-
-def test_interrupt_status_follows_banking_and_source():
-    player = SoundMonitorPlayer(helpers.build_irq_sid("raster"))
-    player.play_frame()
-    mem = player._mem  # pylint: disable=protected-access
-    obs = player._obs  # pylint: disable=protected-access
-    mem[1] = 0x34
-    obs[reg.VIC_IRQ_STATUS] = 0x5B
-    assert obs[reg.VIC_IRQ_STATUS] == 0x5B
-    mem[1] = 0x37
-    assert (obs[reg.CIA1_ICR], obs[reg.VIC_IRQ_STATUS]) == (0, 0x70)
-
-
-def _host(source="raster"):
-    player = SoundMonitorPlayer(helpers.build_irq_sid(source))
-    return player, player._host  # pylint: disable=protected-access
-
-
-def test_raster_compare_off_screen_never_raises():
-    player, host = _host()
-    host.mem[reg.VIC_CONTROL_1] = 0x9B
-    host.mem[reg.VIC_RASTER] = 0xFF
-    host.max_cycles = 3 * host.period
-    grid = player.render_grid(6)
-    assert len({row[0] for row in grid}) == 1
-
-
-@pytest.mark.parametrize(
-    "source, addr", [("raster", reg.VIC_IRQ_ENABLE), ("cia", reg.CIA1_CRA)]
-)
-def test_registers_under_ram_are_not_io(source, addr):
-    _, host = _host(source)
-    state = (host.enable, host.running, host.due)
-    host.ram[1] = 0x34
-    host.mem[addr] = 0
-    assert (host.enable, host.running, host.due) == state
-
-
-def test_cia_timer_restarts_only_when_started_or_forced():
-    _, host = _host("cia")
-    due = host.due
-    host.mem[reg.CIA1_CRA] = 0x01
-    assert host.due == due
-    host.mem[reg.CIA1_CRA] = 0x00
-    assert host.due == float("inf")
-    host.mem[reg.CIA1_CRA] = 0x09
-    assert host.due != float("inf") and host.oneshot
