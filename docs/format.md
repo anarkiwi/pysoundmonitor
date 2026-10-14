@@ -117,6 +117,30 @@ builds. `SoundMonitorPlayer.cadence` derives the play period from what init
 programs; per-section cadence is also exposed on the model (`latch + 1`
 cycles/call, and `song.cia_latch`).
 
+### Tunes that install their own interrupt
+
+A header play address of 0 (every Soundmonitor RSID) means init installs the
+play handler itself. `SoundMonitorPlayer` then hands the tune to
+`pysoundmonitor.irq.InterruptHost`, which runs init as the main program from the
+state the KERNAL leaves (CPU port `$37`, CIA #1 Timer A running at the KERNAL
+latch with its IRQ enabled) and raises the source
+`pysidtracker.playroutine_cadence` finds playing the tune — the VIC raster
+compare, or Timer A of CIA #1 (IRQ) or CIA #2 (NMI) — when the registers the tune
+programs say it fires. The interrupt is taken as the 6510 takes it: masked by the
+I flag (IRQ) or on the edge (NMI), through the vector the CPU port banks in
+(`$0314`/`$0318` under the KERNAL, else `$FFFE`/`$FFFA`), with
+`$D019`/`$DC0D`/`$DD0D` reporting and acknowledging it, and leaving on `RTI` or
+through the KERNAL exits sidplayfp provides. Each frame is one play period
+(`cadence.cycles_per_call`); a period with no raise (a handler outlasting it, a
+stopped timer) repeats the last frame. Between raises the main program runs, so an
+init that never returns keeps playing.
+
+Only the play source is raised: another interrupt (an NMI sample player beside
+the music IRQ) is not, so the `$D418` it writes can differ from the oracle while
+the music registers match. CPU time the VIC steals on badlines is not modelled,
+so a main-loop sample player runs faster than on the oracle. A tune with play
+address 0 and no interrupt seen playing it raises `SidParseError`.
+
 ### Oracle testing
 
 `tests/test_oracle_hvsc.py` renders each covered HVSC tune with
@@ -126,6 +150,33 @@ frame (`pysidtracker.make_oracle_fixtures`). It is `oracle`-marked and runs in a
 dedicated CI job (`pytest -m oracle`) with Docker; HVSC `.sid` files are
 copyright works, fetched to a cache and never committed. See the base
 [oracle-testing guide](https://github.com/anarkiwi/pysidtracker/blob/main/docs/oracle-testing.md).
+
+### HVSC oracle survey
+
+[`scripts/oracle_hvsc.py`](../scripts/oracle_hvsc.py) plugs `SoundMonitorPlayer`
+into the
+[`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
+whole-song comparison against the `sidtrace` oracle (Docker), over every subtune
+of every HVSC tune SIDId names `Soundmonitor`. Its `info` reports the `engine`
+anchor the reader recognises (`cia_loader`, `note_freq` or `null`), `rsid`, the
+play `trigger` (`pal_video` / `ntsc_video` / `cia_timer` / `nmi_timer`, or
+`null` when unknown), `speed` (play calls per PAL frame) and `dynamic` (variable
+timer). Tunes the player rejects raise `SidParseError`, a
+`pysidtracker.SidParseError`, so the survey counts them as `not_decompiled`.
+
+```bash
+pip install "pysidtracker[survey]>=0.12.0"
+python -m pysidtracker.survey find $HVSC --player '^Soundmonitor$' --out .hvsc-survey/tunes.csv
+PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
+    --work .hvsc-survey --render oracle_hvsc:render --jobs 32
+python -m pysidtracker.survey report .hvsc-survey/results.csv
+python -m pysidtracker.survey triage .hvsc-survey
+PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC .hvsc-survey/tunes.csv <md5>_<song> \
+    --work .hvsc-survey --render oracle_hvsc:render
+```
+
+`results.csv` is written when `run` finishes. `.hvsc-survey/` holds
+copyright-derived traces and is gitignored.
 
 ## References
 

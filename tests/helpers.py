@@ -62,9 +62,9 @@ def make_instruments():
     return {1: with_filter, 2: no_filter}
 
 
-def _psid(payload, load, init, play, songs=1):
+def _psid(payload, load, init, play, songs=1, magic=b"PSID"):
     header = bytearray(0x7C)
-    header[0:4] = b"PSID"
+    header[0:4] = magic
     struct.pack_into(">H", header, 0x04, 2)  # version
     struct.pack_into(">H", header, 0x06, 0x7C)  # data offset
     struct.pack_into(">H", header, 0x08, load)
@@ -220,3 +220,89 @@ def build_playable_sid(load=0x1000):
     body[init - load : init - load + len(init_code)] = init_code
     body[play - load : play - load + len(play_code)] = play_code
     return _psid(bytes(body), load, init, play)
+
+
+IRQ_LOAD = 0x1000
+IRQ_HANDLER = 0x1040
+IRQ_COUNTER = 0x10F0
+
+
+def _word(value):
+    return bytes((value & 0xFF, value >> 8))
+
+
+def _sta(addr, value):
+    """``LDA #value / STA addr``."""
+    return bytes((0xA9, value, 0x8D)) + _word(addr)
+
+
+def _bump(reg):
+    """``INC counter / LDA counter / STA $D400+reg`` (9 bytes)."""
+    return (
+        b"\xee"
+        + _word(IRQ_COUNTER)
+        + b"\xad"
+        + _word(IRQ_COUNTER)
+        + b"\x8d"
+        + _word(0xD400 + reg)
+    )
+
+
+def _setup(source, vector):
+    """Init code installing the handler and programming the interrupt ``source``."""
+    lo, hi = _word(IRQ_HANDLER)
+    code = b"\x78" + _sta(vector, lo) + _sta(vector + 1, hi)
+    if source == "raster":
+        code += (_sta(0xDC0D, 0x7F) + _sta(0xD01A, 0x01) + _sta(0xD011, 0x1B)) + _sta(
+            0xD012, 0x80
+        )
+    else:
+        cia = 0xDD00 if source == "nmi" else 0xDC00
+        code += _sta(cia + 4, 0xC7) + _sta(cia + 5, 0x4C) + _sta(cia + 0xD, 0x81)
+        code += _sta(cia + 0xE, 0x11)
+    return code + _sta(0xD418, 0x0F)
+
+
+def build_irq_sid(source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D):
+    """An RSID (play address 0) whose init installs its own play interrupt.
+
+    ``source`` is ``raster`` (VIC), ``cia`` (CIA #1 Timer A) or ``nmi`` (CIA #2
+    Timer A). The handler bumps a counter into voice 1, 2 or 3 freq-lo when its
+    status register reports the interrupt, then stores a re-read of that register
+    into the next register. The raster handler acknowledges with opcode ``ack``
+    and leaves through ``$EA31``. The CIA handlers are installed for the CPU port
+    ``bank`` sets: under the KERNAL through ``$0314`` (left through ``$EA31``) or
+    ``$0318`` (left through ``$FE47``), else through ``$FFFE``/``$FFFA`` (``RTI``).
+    Init ends ``CLI``/``RTS``; ``loop`` never returns, bumping a second counter
+    into ``$D415``; without ``cli`` interrupts stay masked. Functional 6502
+    written for the tests -- no tune bytes.
+    """
+    if source == "raster":
+        init = _setup(source, 0x0314)
+        status = b"\xad\x19\xd0" + bytes((ack, 0x19, 0xD0)) + b"\x10\x09"
+        handler = status + _bump(0) + b"\xad\x19\xd0\x8d\x01\xd4\x4c\x31\xea"
+    else:
+        nmi, kernal = source == "nmi", bank & 2
+        icr = 0xDD0D if nmi else 0xDC0D
+        vector = (
+            (0x0318 if kernal else 0xFFFA) if nmi else (0x0314 if kernal else 0xFFFE)
+        )
+        init = bytes((0xA9, bank, 0x85, 0x01)) + _setup(source, vector)
+        save = nmi or not kernal
+        handler = (b"\x48" if save else b"") + b"\xad" + _word(icr) + b"\x10\x09"
+        reg = 14 if nmi else 7
+        handler += _bump(reg) + b"\xad" + _word(icr) + b"\x8d" + _word(0xD401 + reg)
+        handler += b"\x68" if save else b""
+        if kernal:
+            handler += b"\x4c" + _word(0xFE47 if nmi else 0xEA31)
+        else:
+            handler += b"\x40"
+    main = IRQ_LOAD + 0x30
+    init += (b"\x58" if cli else b"") + (b"\x4c" + _word(main) if loop else b"\x60")
+    counter = _word(IRQ_COUNTER + 1)
+    spin = b"\xee" + counter + b"\xad" + counter + b"\x8d\x15\xd4\x4c" + _word(main)
+    body = bytearray(IRQ_COUNTER + 2 - IRQ_LOAD)
+    body[: len(init)] = init
+    body[main - IRQ_LOAD : main - IRQ_LOAD + len(spin)] = spin
+    body[IRQ_HANDLER - IRQ_LOAD : IRQ_HANDLER - IRQ_LOAD + len(handler)] = handler
+    return _psid(_word(IRQ_LOAD) + bytes(body), 0, IRQ_LOAD, 0, magic=b"RSID")

@@ -22,9 +22,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: black --check
-        run: black --check src/pysoundmonitor tests
+        run: black --check src/pysoundmonitor tests scripts
       - name: pylint
-        run: pylint src/pysoundmonitor tests
+        run: pylint src/pysoundmonitor tests scripts
       - name: Cache HVSC test tunes
         # HVSC tunes are copyright works and are NEVER committed; they are
         # fetched from the HVSC mirror into the gitignored tunecache and cached

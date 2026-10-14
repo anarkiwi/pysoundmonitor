@@ -17,7 +17,8 @@ The tunes span both Soundmonitor replay variations:
 
 and both directly loaded ``$A000`` Hulsbeck builds and relocated ``$6xxx``/
 ``$9xxx`` builds (``charts``, ``big_boing``, ``into_orbit`` -- the last two only
-land their tables in place after init runs).
+land their tables in place after init runs). Synthetic RSIDs (``helpers``) cover
+each interrupt a tune can install for itself.
 """
 
 import os
@@ -26,7 +27,9 @@ from pathlib import Path
 import pytest
 
 from pysidtracker import make_oracle_fixtures
+from pysidtracker.oracle import read_sidtrace, run_sidtrace, sidtrace_grid
 
+import helpers
 from pysoundmonitor import SoundMonitorPlayer
 
 # Cache under the workspace (a Docker-daemon-visible path, and what CI persists
@@ -63,3 +66,26 @@ tune_id, oracle_match = make_oracle_fixtures(
 @pytest.mark.oracle
 def test_render_matches_oracle(oracle_match):  # noqa: F811
     oracle_match()
+
+
+@pytest.mark.oracle
+@pytest.mark.parametrize(
+    "name, kwargs",
+    [
+        ("raster", {"source": "raster"}),
+        ("raster_rmw", {"source": "raster", "ack": 0xEE}),
+        ("cia_kernal", {"source": "cia"}),
+        ("cia_ram", {"source": "cia", "bank": 0x35}),
+        ("nmi_kernal", {"source": "nmi"}),
+        ("nmi_ram", {"source": "nmi", "bank": 0x35}),
+    ],
+)
+def test_installed_interrupt_matches_oracle(name, kwargs):
+    data = helpers.build_irq_sid(**kwargs)
+    sid = _CACHE / "synthetic" / f"{name}.sid"
+    sid.parent.mkdir(parents=True, exist_ok=True)
+    sid.write_bytes(data)
+    trace = run_sidtrace(sid, sid.with_suffix(".csv.zst"), seconds=3)
+    oracle = sidtrace_grid(read_sidtrace(trace))[:100]
+    assert len(oracle) == 100
+    assert SoundMonitorPlayer(data).render_grid(100) == oracle
