@@ -219,6 +219,8 @@ __marimo__/
 
 # Soundmonitor test tunes are HVSC copyright works -- never committed.
 tests/.tunecache/
+# pysidtracker fetch cache (sidplayfp power-on image, ROMs).
+.tunecache/
 *.sid
 *.prg
 *.wav
