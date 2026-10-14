@@ -5,7 +5,8 @@ Soundmonitor's replay is relocatable and drives its cadence from inside the tune
 off the PAL video frame), so a static transcription would have to re-derive that
 per build. :class:`SoundMonitorPlayer` instead runs the tune's *own* 6502
 ``init`` and ``play`` routines on pysidtracker's jennings host, one ``play``
-call per frame, with the raster and osc3/env3 reads the replay samples. The
+call per frame, with the raster and osc3/env3 reads the replay samples; a tune
+with play address 0 runs under :class:`~pysoundmonitor.irq.InterruptHost`. The
 per-frame grid is validated byte-exact against the ``sidtrace`` oracle (see the
 oracle test). Reading ``.sid``/``.prg`` containers is routed through
 :class:`~pysidtracker.SidImage`; :class:`SoundMonitorSidParser` gives the same
@@ -29,6 +30,7 @@ from pysidtracker import (
 from pysidtracker import registers as reg
 
 from .errors import SidParseError
+from .irq import InterruptHost
 from .model import Song
 from .reader import find_fingerprint, parse
 
@@ -58,7 +60,16 @@ class SoundMonitorPlayer(EmuPlayer):
         header = image.header
         init = header.init_address or header.real_load_address
         self._sid_bytes = image.container + image.image
+        self._subtune = subtune
         self._cadence: Optional[Cadence] = None
+        self._interrupt = None
+        if not header.play_address:
+            if self.cadence.source is None:
+                raise SidParseError(
+                    "play address 0 and no interrupt was seen to play the tune"
+                )
+            self._interrupt = self.cadence
+        self._host: Optional[InterruptHost] = None
         super().__init__(
             bytes(image.mem),
             0,
@@ -73,8 +84,29 @@ class SoundMonitorPlayer(EmuPlayer):
     def cadence(self) -> Cadence:
         """The tune's play-routine :class:`~pysidtracker.Cadence` (cached)."""
         if self._cadence is None:
-            self._cadence = playroutine_cadence(self._sid_bytes)
+            self._cadence = playroutine_cadence(self._sid_bytes, subtune=self._subtune)
         return self._cadence
+
+    def _init(self, subtune: int) -> None:
+        """Run ``init``, or for play address 0 hand it to an :class:`InterruptHost`."""
+        if self._interrupt is None:
+            super()._init(subtune)
+            return
+        self._host = InterruptHost(
+            self._mem,
+            self._init_addr,
+            subtune,
+            self._interrupt,
+            sid_model=self._sid_model,
+            max_cycles=self._max_cycles,
+        )
+        self._mpu, self._obs = self._host.mpu, self._host.mem
+
+    def _frame(self) -> None:
+        if self._host is None:
+            super()._frame()
+        else:
+            self._host.frame()
 
     def register_writes(self, nframes: int) -> Iterator[RegWrite]:
         """Frame this replay into a :class:`~pysidtracker.RegWrite` log.

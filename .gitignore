@@ -225,3 +225,5 @@ tests/.tunecache/
 *.sidwr.bin
 # Oracle cache: fetched HVSC tunes + derived sidtrace register traces (CI-cached).
 .oracle-cache/
+# HVSC oracle survey work tree (copyright-derived traces).
+.hvsc-survey/
