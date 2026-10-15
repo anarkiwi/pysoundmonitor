@@ -159,6 +159,120 @@ def build_prg(sections=None, instruments=None, **kwargs):
     return bytes((load & 0xFF, (load >> 8) & 0xFF)) + payload, anchor
 
 
+_PACKED_LOAD = 0x0801  # PRG/BASIC load address
+_PACKED_ENTRY = 0x0825  # the 6502 unpacker entry (the SYS target)
+_PACKED_SRC = 0x4000  # packed payload source: above the destination, in low RAM
+_PACKED_RETURN = 0xC000  # the unpacker's exit jump; ends the host run
+
+
+def _sys_line(entry: int) -> bytes:
+    """A tokenised BASIC line running ``SYS <entry>``."""
+    return b"\x01\x00\x00\x00\x01\x9e\x20" + str(entry).encode("ascii") + b"\x00"
+
+
+def _unpacker(src: int, dst: int, count: int, player: int, base: int = 0) -> bytes:
+    """A 6502 forward-copy of ``count`` bytes ``src`` -> ``dst`` that leaves via ``JMP player``.
+
+    Zero-page registers with the core's ``$A5``/``$E6``/``$C6`` set and ``(zp),Y`` I/O;
+    branches are absolute and resolved in place. Require ``src >= dst`` (no self-run-over).
+    """
+    sp_l, sp_h, dp_l, dp_h, cl, ch = 0x02, 0x03, 0x04, 0x05, 0x08, 0x09
+    prog = bytearray()
+    label = {}
+    branches = []
+
+    def lda_i(byte):
+        return bytes((0xA9, byte))
+
+    def sta(a):
+        return bytes((0x8D, a & 0xFF, a >> 8))
+
+    def br(opbyte, target):
+        idx = len(prog)
+        prog.append(opbyte)
+        prog.append(0)
+        branches.append((idx, target))
+
+    def jmp(target):
+        prog.extend((0x4C, target & 0xFF, target >> 8))
+
+    prog.extend(lda_i(src & 0xFF) + sta(sp_l))
+    prog.extend(lda_i(src >> 8) + sta(sp_h))
+    prog.extend(lda_i(dst & 0xFF) + sta(dp_l))
+    prog.extend(lda_i(dst >> 8) + sta(dp_h))
+    prog.extend(lda_i(count & 0xFF) + sta(cl))
+    prog.extend(lda_i(count >> 8) + sta(ch))
+
+    label["top"] = len(prog)
+    prog.extend((0xA5, cl))
+    br(0xF0, "chk")
+    br(0xD0, "body")
+    label["chk"] = len(prog)
+    prog.extend((0xA5, ch))
+    br(0xF0, "fin")
+    br(0xD0, "body")
+    label["body"] = len(prog)
+    prog.extend((0xA0, 0x00))
+    prog.extend((0xB1, sp_l))
+    prog.extend((0x91, dp_l))
+    prog.extend((0xE6, sp_l))
+    br(0xD0, "s1")
+    prog.extend((0xE6, sp_h))
+    label["s1"] = len(prog)
+    prog.extend((0xE6, dp_l))
+    br(0xD0, "d1")
+    prog.extend((0xE6, dp_h))
+    label["d1"] = len(prog)
+    prog.extend((0xA5, cl))
+    br(0xF0, "db")
+    prog.extend((0xC6, cl))
+    br(0xD0, "cont")
+    prog.extend((0xA5, ch))
+    br(0xF0, "fin")
+    br(0xD0, "cont")
+    label["db"] = len(prog)
+    prog.extend((0xC6, cl))
+    prog.extend((0xC6, ch))
+    label["cont"] = len(prog)
+    jmp(label["top"] + base)
+    label["fin"] = len(prog)
+    jmp(player)
+
+    for idx, target in branches:
+        prog[idx + 1] = (label[target] - (idx + 2)) & 0xFF
+    return bytes(prog)
+
+
+def build_packed_prg(sections=None, instruments=None, **kwargs):
+    """A bare PRG whose SYS stub unpacks the song data to the expected base.
+
+    The payload is laid out at ``base`` (default $1000) but first sits at a higher
+    packed page; a 6502 stub reached through a BASIC ``SYS`` copies it back -- the
+    shape of a SoundMonitor-Crunch output. ``parse`` must run the stub first.
+
+    Returns:
+        ``(prg_bytes, anchor)``.
+    """
+    if sections is None:
+        sections = [make_section()]
+    if instruments is None:
+        instruments = make_instruments()
+    payload, base, _init, _play, anchor = build_payload(sections, instruments, **kwargs)
+    src, dst = _PACKED_SRC, base
+    if src < dst or src + len(payload) >= 0x8000:
+        raise ValueError("packed source must sit above the destination and in low RAM")
+    mem = bytearray(0x10000)
+    line = _sys_line(_PACKED_ENTRY)
+    mem[_PACKED_LOAD : _PACKED_LOAD + len(line)] = line
+    unpacker = _unpacker(src, dst, len(payload), _PACKED_RETURN, base=_PACKED_ENTRY)
+    mem[_PACKED_ENTRY : _PACKED_ENTRY + len(unpacker)] = unpacker
+    mem[src : src + len(payload)] = payload
+    prg = bytes((_PACKED_LOAD & 0xFF, (_PACKED_LOAD >> 8) & 0xFF)) + bytes(
+        mem[_PACKED_LOAD : src + len(payload)]
+    )
+    return prg, anchor
+
+
 def build_no_fingerprint():
     """A valid-looking PSID whose image carries no engine fingerprint."""
     payload = bytes(0x200)

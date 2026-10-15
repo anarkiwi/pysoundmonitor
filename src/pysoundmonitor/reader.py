@@ -13,14 +13,19 @@ playback engine.
 
 from __future__ import annotations
 
+import pathlib
+import tempfile
 from typing import Dict, List, Optional, Set
 
 from pysidtracker import (
     EmulatorUnavailable,
+    KernalHost,
+    KernalHostError,
     SidImage,
     find_code_all,
     read_bytes,
     run_init,
+    sys_addr,
 )
 from pysidtracker import SidParseError as BaseSidParseError
 from pysidtracker import locate_note_freq as _base_locate_note_freq
@@ -30,6 +35,10 @@ from . import constants as c
 from .errors import SidParseError
 from .model import Instrument, NoteFreqTable, Row, Section, Song
 
+# A packed bare PRG unpacks through a short BASIC SYS-stub chain; cap both.
+_MAX_SYS_STAGES = 4
+_STAGE_STEPS = 4_000_000
+
 
 def _operand_targets(image: SidImage, opcode: int) -> Dict[int, int]:
     """Map every absolute operand of ``opcode`` in the image to its first site.
@@ -37,7 +46,7 @@ def _operand_targets(image: SidImage, opcode: int) -> Dict[int, int]:
     An absolute-addressed 6502 instruction is ``opcode lo hi``; this returns
     ``{lo | hi<<8: site_address}`` for every occurrence, letting a relocatable
     player's own table/global addresses be recovered from its code operands.
-    Scans the whole 64 KiB image via the shared masked code-fragment matcher.
+    Scans the whole image via the shared masked code-fragment matcher.
     """
     pattern = f"{opcode:02X} {{target:w}}"
     targets: Dict[int, int] = {}
@@ -126,12 +135,17 @@ def _section_span(start: int, last: int) -> List[int]:
     return [(start + k) & 0xFF for k in range(count)]
 
 
+def _null_ptr(header: int) -> bool:
+    """True for a null section/voice pointer (an unused slot in the split table)."""
+    return header == 0
+
+
 def _section_ok(image: SidImage, base: int, index: int) -> bool:
     """Cheap validity probe: header + all voice stream pointers land in-image."""
     header = image.ptr(
         base + c.SECTION_HEADER_PTR_LO, base + c.SECTION_HEADER_PTR_HI, index
     )
-    if not image.contains(header):
+    if _null_ptr(header) or not image.contains(header):
         return False
     patlen = image.peek(header + c.SH_PATLEN)
     if patlen == 0 or patlen > c.MAX_PATTERN_LEN:
@@ -140,7 +154,7 @@ def _section_ok(image: SidImage, base: int, index: int) -> bool:
         stream = image.ptr(
             base + c.VOICE_PTR_LO[voice], base + c.VOICE_PTR_HI[voice], index
         )
-        if not image.contains(stream):
+        if _null_ptr(stream) or not image.contains(stream):
             return False
     return True
 
@@ -192,7 +206,7 @@ def _decode_section(image: SidImage, base: int, index: int) -> Optional[Section]
     header = image.ptr(
         base + c.SECTION_HEADER_PTR_LO, base + c.SECTION_HEADER_PTR_HI, index
     )
-    if not image.contains(header):
+    if _null_ptr(header) or not image.contains(header):
         return None
     patlen = image.peek(header + c.SH_PATLEN)
     if patlen == 0 or patlen > c.MAX_PATTERN_LEN:
@@ -207,7 +221,7 @@ def _decode_section(image: SidImage, base: int, index: int) -> Optional[Section]
         stream = image.ptr(
             base + c.VOICE_PTR_LO[voice], base + c.VOICE_PTR_HI[voice], index
         )
-        if not image.contains(stream):
+        if _null_ptr(stream) or not image.contains(stream):
             return None
         voices.append(_decode_stream(image, stream, patlen))
         transpose.append(image.peek(base + c.VOICE_XPOSE[voice] + index))
@@ -312,37 +326,133 @@ def _run_init(image: SidImage) -> bool:
         return False
 
 
-def parse(data: bytes) -> Song:
-    """Decode raw ``.sid``/``.prg`` ``data`` into a :class:`Song`.
-
-    Recognises the engine build-tolerantly (CIA-timed or fixed-cadence). A
-    packed/relocating tune only exposes its player and song tables after its init
-    routine has moved/decompressed them, so init is emulated and decoding retried
-    whenever the engine is absent or no section decodes in the directly loaded
-    image. Raises :class:`SidParseError` if the engine is not found either way.
-    """
-    image = SidImage.from_bytes(data)
+def _decode_song(image: SidImage) -> Optional[Song]:
+    """A :class:`Song` decoded from ``image``, or ``None`` when no section decodes."""
     anchor = find_fingerprint(image)
-    plan = _plan(image) if anchor is not None else None
-    if (anchor is None or plan[3] <= 0) and _run_init(image):
-        retry = find_fingerprint(image)
-        if retry is not None:
-            anchor = retry
-        plan = _plan(image)
     if anchor is None:
-        raise SidParseError("Soundmonitor engine fingerprint not found in image")
-    base, start, last, _count = plan
+        return None
+    base, start, last, count = _plan(image)
+    if count <= 0:
+        return None
     sections = _decode_sections(image, base, start, last)
-    instruments = _decode_instruments(image, base, _instrument_indices(sections))
-    note_freq = locate_note_freq(image)
+    if not sections:
+        return None
     return Song(
         base=base,
         player_anchor=anchor,
         header=image.header,
         sections=sections,
-        instruments=instruments,
-        note_freq=note_freq,
+        instruments=_decode_instruments(image, base, _instrument_indices(sections)),
+        note_freq=locate_note_freq(image),
     )
+
+
+def _ram_image(mem) -> SidImage:
+    """A whole-64-KiB :class:`SidImage` view of unpacked ``mem`` for decoding."""
+    return SidImage(bytearray(mem), 0x0000, MEM_SIZE, None, b"", b"")
+
+
+def _safe_roms():
+    """The C64 ROMs as ``{base: bytes}`` when cached, else ``None`` (no ROM calls)."""
+    try:
+        from pysidtracker import roms as _roms
+
+        return _roms.load_roms() if _roms.roms_available() else None
+    # No CPU core or ROMs present here; degrade to a plain-RAM decode.
+    except Exception:  # pylint: disable=broad-except
+        return None
+
+
+def _host_dir() -> pathlib.Path:
+    d = pathlib.Path(tempfile.gettempdir()) / "pysoundmonitor-khost"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _unpack_mem(image: SidImage) -> Optional[bytearray]:
+    """Run a bare packed PRG's BASIC SYS stubs; the final RAM, else ``None``.
+
+    Drives the ``SYS`` stub chain on the :class:`~pysidtracker.KernalHost`,
+    re-reading the next stub after each stage returns to BASIC, until the RAM
+    decodes or no stub remains; KERNAL/BASIC ROMs load when cached.
+    """
+    if image.header is not None:
+        return None
+    load = image.load
+    prg = image.container + image.image
+    try:
+        current = sys_addr(image, load)
+    except KernalHostError:
+        return None
+    try:
+        host = KernalHost(_host_dir(), roms=_safe_roms())
+    # No CPU core available: degrade rather than raise.
+    except Exception:  # pylint: disable=broad-except
+        return None
+    host.load_prg(prg)
+    for _ in range(_MAX_SYS_STAGES):
+        host.mpu.pc = current
+        try:
+            host.run(until=lambda h: h.mpu.pc >= 0xA000, max_steps=_STAGE_STEPS)
+        except KernalHostError:
+            pass
+        if _decode_song(_ram_image(host.ram)) is not None:
+            return bytearray(host.ram)
+        try:
+            current = sys_addr(host.ram, load)
+        except KernalHostError:
+            return None
+    return None
+
+
+def _copy_image(image: SidImage) -> SidImage:
+    """A fresh :class:`SidImage` over a copy of ``mem`` (same header/geometry)."""
+    return SidImage(
+        bytearray(image.mem),
+        image.load,
+        image.end,
+        image.header,
+        image.image,
+        image.container,
+    )
+
+
+def _materialized(image: SidImage) -> Optional[SidImage]:
+    """A decodable-into-a-song copy of ``image`` (init/unpacked), else ``None``.
+
+    Tries the as-loaded RAM, then an emulated init (relocated builds), then the
+    KERNAL-host unpack of a bare packed PRG's SYS stubs; works on a copy so the
+    caller's image is never mutated.
+    """
+    probe = _copy_image(image)
+    if _decode_song(probe) is not None:
+        return probe
+    if _run_init(probe) and _decode_song(probe) is not None:
+        return probe
+    if probe.header is None:
+        ram = _unpack_mem(probe)
+        if ram is not None and _decode_song(_ram_image(ram)) is not None:
+            return _ram_image(ram)
+    return None
+
+
+def parse(data: bytes) -> Song:
+    """Decode raw ``.sid``/``.prg`` ``data`` into a :class:`Song`.
+
+    Decodes the as-loaded image, an emulated init, or the KERNAL-host unpack of a
+    bare packed PRG's SYS stubs. Never returns an empty :class:`Song`: an image
+    that cannot materialise into a song raises :class:`SidParseError`.
+    """
+    image = SidImage.from_bytes(data)
+    materialized = _materialized(image)
+    song = _decode_song(materialized) if materialized is not None else None
+    if song is None:
+        if find_fingerprint(image) is not None:
+            raise SidParseError(
+                "Soundmonitor fingerprint found but no section decodes in the image"
+            )
+        raise SidParseError("Soundmonitor engine fingerprint not found in image")
+    return song
 
 
 def read(src) -> Song:

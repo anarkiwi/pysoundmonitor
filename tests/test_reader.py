@@ -74,6 +74,24 @@ def test_parse_prg():
     assert len(song.sections) == 1
 
 
+def test_parse_packed_prg():
+    """A packed bare PRG (SYS-stub unpacker) must decode to the same song."""
+    data, anchor = helpers.build_packed_prg()
+    song = parse(data)
+    assert song.player_anchor == anchor
+    assert song.base == 0x1000
+    assert song.header is None
+    assert len(song.sections) == 1
+
+
+def test_parse_fingerprint_nosections_raises():
+    """A fingerprint with no decodable sections must raise, not yield an empty song."""
+    payload = bytes(0x10) + c.STA_DC04 + c.CMP_06 + c.STA_DC05 + bytes(0x10)
+    prg = bytes((0x00, 0x10)) + payload
+    with pytest.raises(SidParseError):
+        parse(prg)
+
+
 def test_read_from_bytes_and_path(tmp_path):
     data, _ = helpers.build_sid()
     assert read(data).base == 0x1000
