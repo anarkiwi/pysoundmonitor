@@ -33,9 +33,21 @@ from pysidtracker.irqhost import InterruptPlayer
 
 from .errors import SidParseError
 from .model import Song
-from .reader import find_fingerprint, parse
+from .reader import _materialized, find_fingerprint, parse
 
 _MAX_CYCLES = 8_000_000
+
+
+def _interrupted(raw) -> bool:
+    """True if the CPU serviced a raise (entered an interrupt vector).
+
+    The machine still *raises* a masked source, but the handler runs only if the
+    CPU enters the vector -- reported as a ``<source>_entry`` event. A playing
+    interrupt-driven tune has such an entry; a masked (unplayable) one has none.
+    """
+    return any(
+        len(r) == 4 and r[1] is None and str(r[3]).endswith("_entry") for r in raw
+    )
 
 
 class SoundMonitorPlayer(EmuPlayer):
@@ -99,14 +111,21 @@ class SoundMonitorPlayer(EmuPlayer):
             return super().snapshot()
         return self._hosted.snapshot()
 
+    def _assert_playable(self) -> None:
+        host = self._hosted.host if self._hosted else None
+        if host is not None and not _interrupted(host.raw):
+            raise SidParseError("no interrupt was seen to play the tune")
+
     def render_grid(self, nframes: int):
         """Render ``nframes``; a hosted tune is framed at its play source's raises."""
         if self._hosted is None:
             return super().render_grid(nframes)
         try:
-            return self._hosted.render_grid(nframes)
+            grid = self._hosted.render_grid(nframes)
+            self._assert_playable()
         except BaseSidParseError as exc:
             raise SidParseError(str(exc)) from exc
+        return grid
 
     def register_writes(self, nframes: int) -> Iterator[RegWrite]:
         """Frame this replay into a :class:`~pysidtracker.RegWrite` log.
@@ -144,8 +163,16 @@ class SoundMonitorSidParser(BaseSidParser):
         return parse(data)
 
     def recognize(self, image: SidImage) -> object:
-        """Return the fingerprint address if the engine is present, else ``None``."""
-        return find_fingerprint(image)
+        """The fingerprint address if the image materialises into a song, else ``None``.
+
+        A fingerprint embedded in data the reader cannot decode (an unexpanded
+        packed stream) is not a recognised tune, so the anchor is only returned
+        once the image decodes (directly, after init, or after unpack).
+        """
+        anchor = find_fingerprint(image)
+        return (
+            anchor if anchor is not None and _materialized(image) is not None else None
+        )
 
     def player(self, data: bytes, subtune: int = 0) -> SoundMonitorPlayer:
         """Build a :class:`SoundMonitorPlayer` for ``data``."""
