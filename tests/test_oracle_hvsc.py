@@ -17,8 +17,10 @@ The tunes span both Soundmonitor replay variations:
 
 and both directly loaded ``$A000`` Hulsbeck builds and relocated ``$6xxx``/
 ``$9xxx`` builds (``charts``, ``big_boing``, ``into_orbit`` -- the last two only
-land their tables in place after init runs). Synthetic RSIDs (``helpers``) cover
-each interrupt a tune can install for itself.
+land their tables in place after init runs). ``sidewalk`` is the issue #20
+case: play address 0 (the init installs its own interrupt) and 21 subtunes,
+whose frame-0 ``v1_freq_hi`` must stay the oracle's 0 baseline. Synthetic RSIDs
+(``helpers``) cover each interrupt a tune can install for itself.
 """
 
 import os
@@ -27,7 +29,15 @@ from pathlib import Path
 import pytest
 
 from pysidtracker import make_oracle_fixtures
-from pysidtracker.oracle import read_sidtrace, run_sidtrace, sidtrace_grid
+from pysidtracker.oracle import (
+    aligned_match,
+    cached_sidtrace,
+    read_sidtrace,
+    run_sidtrace,
+    sidtrace_cadence,
+    sidtrace_grid,
+)
+from pysidtracker.testing import resolve_tune
 
 import helpers
 from pysoundmonitor import SoundMonitorPlayer
@@ -66,6 +76,30 @@ tune_id, oracle_match = make_oracle_fixtures(
 @pytest.mark.oracle
 def test_render_matches_oracle(oracle_match):  # noqa: F811
     oracle_match()
+
+
+# Issue #20: 20 of these 21 subtunes once differed only in frame-0 v1_freq_hi; every one must now be exact.
+SIDEWALK = "MUSICIANS/C/Callet_Charles/Sidewalk.sid"
+SIDEWALK_SONGS = 21
+SIDEWALK_FRAMES = 250
+
+
+@pytest.mark.oracle
+@pytest.mark.parametrize("song", range(1, SIDEWALK_SONGS + 1))
+def test_sidewalk_subtunes_match_the_oracle(song):
+    path = resolve_tune(SIDEWALK, cache_dir=_CACHE / "hvsc", local_env="HVSC")
+    assert path is not None, "tune unavailable"
+    data = Path(path).read_bytes()
+    csv = _CACHE / "csv" / f"sidewalk-{song}.csv.zst"
+    seconds = SIDEWALK_FRAMES // 50 + 2
+    rows = cached_sidtrace(Path(path), csv, seconds=seconds, song=song)
+    oracle = sidtrace_grid(rows, cycles_per_frame=sidtrace_cadence(rows))[
+        :SIDEWALK_FRAMES
+    ]
+    rendered = SoundMonitorPlayer(data, song - 1).render_grid(len(oracle))
+    assert aligned_match(
+        oracle, rendered, max_lead=4
+    ), f"sidewalk song {song}: player render does not match the sidtrace oracle"
 
 
 @pytest.mark.oracle
