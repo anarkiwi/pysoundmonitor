@@ -36,6 +36,18 @@ def test_init_seeds_volume():
     assert player.regs[0x18] == 0x0F  # $D418 volume set by init
 
 
+def test_unwritten_register_holds_the_oracle_zero_baseline():
+    """Issue #20: the boot image models the uninitialised SID file at the chip's 0 reset state.
+
+    A register the tune never writes must read the oracle's 0 baseline, not the
+    power-on RAM byte; the player then seeds volume as the PSID driver does.
+    """
+    from pysidtracker.poweron import power_on_ram
+
+    ram = power_on_ram()
+    assert ram[0xD400:0xD419] == bytes(0x19)
+
+
 def test_snapshot_masks_pw_hi():
     # Player masks the pulse-width-high nibbles to match the oracle semantics.
     player = SoundMonitorPlayer(helpers.build_playable_sid())
