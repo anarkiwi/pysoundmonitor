@@ -217,9 +217,8 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Soundmonitor test tunes are HVSC copyright works -- never committed.
-tests/.tunecache/
-# pysidtracker fetch cache (sidplayfp power-on image, ROMs).
+# pysidtracker fetch cache: HVSC test tunes (copyright works -- never
+# committed), sidplayfp power-on image, ROMs.
 .tunecache/
 *.sid
 *.prg

@@ -8,7 +8,7 @@ Soundmonitor in the local HVSC tree.
 
 Tunes are HVSC copyright works and are **never** committed; each is fetched +
 cached on demand (honouring ``$HVSC`` first, else the HVSC mirror) into the
-gitignored ``tests/.tunecache``. The tests RUN whenever the source is reachable
+gitignored ``.tunecache``. The tests RUN whenever the source is reachable
 (as in CI, against the mirror); an INDIVIDUAL tune skips only if it is genuinely
 unreachable after retries.
 
@@ -22,19 +22,11 @@ Each tune must:
     own operands, not a walk that runs a relocation-dependent table into the cap).
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 
 from pysidtracker import PlayroutineKind
 
 from pysoundmonitor import SoundMonitorSidParser, constants as c, read
-
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
-
-import fetch_tunes  # noqa: E402  (after sys.path tweak)
 
 # Deterministic representative sample (HVSC-relative paths only -- no tune bytes).
 CORPUS = (
@@ -80,18 +72,9 @@ CORPUS = (
 )
 
 
-def _fetch(rel: str) -> str:
-    """Fetch a corpus tune ($HVSC first, else mirror); skip only if unreachable."""
-    try:
-        return str(fetch_tunes.fetch(rel))
-    except Exception as exc:  # pylint: disable=broad-except
-        pytest.skip(f"corpus tune unavailable after retries: {rel}: {exc}")
-        return ""
-
-
 @pytest.mark.parametrize("rel", CORPUS)
-def test_corpus_tune_decodes(rel):
-    path = _fetch(rel)
+def test_corpus_tune_decodes(rel, tune):
+    path = str(tune(rel))
     parser = SoundMonitorSidParser()
 
     detection = parser.detect(path)

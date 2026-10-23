@@ -7,18 +7,14 @@ emits a self-consistent PSID (or bare ``.prg``) that the reader decodes.
 
 from __future__ import annotations
 
-import struct
+from pysidtracker import write_psid
+from pysidtracker.asm6502 import assemble
 
 from pysoundmonitor import constants as c
 
 STA_DC04 = c.STA_DC04
 STA_DC05 = c.STA_DC05
 CMP_06 = c.CMP_06
-
-# id -> HVSC relative path for the optional on-demand real-tune test.
-TUNES = {
-    "only3": "MUSICIANS/J/JAP/Only_3.sid",
-}
 
 
 def make_section(
@@ -62,17 +58,8 @@ def make_instruments():
     return {1: with_filter, 2: no_filter}
 
 
-def _psid(payload, load, init, play, songs=1, magic=b"PSID"):
-    header = bytearray(0x7C)
-    header[0:4] = magic
-    struct.pack_into(">H", header, 0x04, 2)  # version
-    struct.pack_into(">H", header, 0x06, 0x7C)  # data offset
-    struct.pack_into(">H", header, 0x08, load)
-    struct.pack_into(">H", header, 0x0A, init)
-    struct.pack_into(">H", header, 0x0C, play)
-    struct.pack_into(">H", header, 0x0E, songs)
-    struct.pack_into(">H", header, 0x10, 1)  # start song
-    return bytes(header) + payload
+def _psid(payload, load, init, play, magic="PSID"):
+    return write_psid(load=load, init=init, play=play, image=payload, kind=magic)
 
 
 def build_payload(
@@ -170,77 +157,55 @@ def _sys_line(entry: int) -> bytes:
     return b"\x01\x00\x00\x00\x01\x9e\x20" + str(entry).encode("ascii") + b"\x00"
 
 
-def _unpacker(src: int, dst: int, count: int, player: int, base: int = 0) -> bytes:
+def _unpacker(src: int, dst: int, count: int, player: int, org: int) -> bytes:
     """A 6502 forward-copy of ``count`` bytes ``src`` -> ``dst`` that leaves via ``JMP player``.
 
-    Zero-page registers with the core's ``$A5``/``$E6``/``$C6`` set and ``(zp),Y`` I/O;
-    branches are absolute and resolved in place. Require ``src >= dst`` (no self-run-over).
+    Zero-page pointers/counter with ``(zp),Y`` I/O, assembled at ``org``. Require
+    ``src >= dst`` (no self-run-over).
     """
-    sp_l, sp_h, dp_l, dp_h, cl, ch = 0x02, 0x03, 0x04, 0x05, 0x08, 0x09
-    prog = bytearray()
-    label = {}
-    branches = []
-
-    def lda_i(byte):
-        return bytes((0xA9, byte))
-
-    def sta(a):
-        return bytes((0x8D, a & 0xFF, a >> 8))
-
-    def br(opbyte, target):
-        idx = len(prog)
-        prog.append(opbyte)
-        prog.append(0)
-        branches.append((idx, target))
-
-    def jmp(target):
-        prog.extend((0x4C, target & 0xFF, target >> 8))
-
-    prog.extend(lda_i(src & 0xFF) + sta(sp_l))
-    prog.extend(lda_i(src >> 8) + sta(sp_h))
-    prog.extend(lda_i(dst & 0xFF) + sta(dp_l))
-    prog.extend(lda_i(dst >> 8) + sta(dp_h))
-    prog.extend(lda_i(count & 0xFF) + sta(cl))
-    prog.extend(lda_i(count >> 8) + sta(ch))
-
-    label["top"] = len(prog)
-    prog.extend((0xA5, cl))
-    br(0xF0, "chk")
-    br(0xD0, "body")
-    label["chk"] = len(prog)
-    prog.extend((0xA5, ch))
-    br(0xF0, "fin")
-    br(0xD0, "body")
-    label["body"] = len(prog)
-    prog.extend((0xA0, 0x00))
-    prog.extend((0xB1, sp_l))
-    prog.extend((0x91, dp_l))
-    prog.extend((0xE6, sp_l))
-    br(0xD0, "s1")
-    prog.extend((0xE6, sp_h))
-    label["s1"] = len(prog)
-    prog.extend((0xE6, dp_l))
-    br(0xD0, "d1")
-    prog.extend((0xE6, dp_h))
-    label["d1"] = len(prog)
-    prog.extend((0xA5, cl))
-    br(0xF0, "db")
-    prog.extend((0xC6, cl))
-    br(0xD0, "cont")
-    prog.extend((0xA5, ch))
-    br(0xF0, "fin")
-    br(0xD0, "cont")
-    label["db"] = len(prog)
-    prog.extend((0xC6, cl))
-    prog.extend((0xC6, ch))
-    label["cont"] = len(prog)
-    jmp(label["top"] + base)
-    label["fin"] = len(prog)
-    jmp(player)
-
-    for idx, target in branches:
-        prog[idx + 1] = (label[target] - (idx + 2)) & 0xFF
-    return bytes(prog)
+    return assemble(
+        f"""
+        LDA #${src & 0xFF:02X}
+        STA $02
+        LDA #${src >> 8:02X}
+        STA $03
+        LDA #${dst & 0xFF:02X}
+        STA $04
+        LDA #${dst >> 8:02X}
+        STA $05
+        LDA #${count & 0xFF:02X}
+        STA $08
+        LDA #${count >> 8:02X}
+        STA $09
+  top:  LDA $08
+        BEQ chk
+        BNE body
+  chk:  LDA $09
+        BEQ fin
+        BNE body
+  body: LDY #$00
+        LDA ($02),Y
+        STA ($04),Y
+        INC $02
+        BNE s1
+        INC $03
+  s1:   INC $04
+        BNE d1
+        INC $05
+  d1:   LDA $08
+        BEQ db
+        DEC $08
+        BNE cont
+        LDA $09
+        BEQ fin
+        BNE cont
+  db:   DEC $08
+        DEC $09
+  cont: JMP top
+  fin:  JMP ${player:04X}
+""",
+        org,
+    )[0]
 
 
 def build_packed_prg(sections=None, instruments=None, **kwargs):
@@ -264,7 +229,7 @@ def build_packed_prg(sections=None, instruments=None, **kwargs):
     mem = bytearray(0x10000)
     line = _sys_line(_PACKED_ENTRY)
     mem[_PACKED_LOAD : _PACKED_LOAD + len(line)] = line
-    unpacker = _unpacker(src, dst, len(payload), _PACKED_RETURN, base=_PACKED_ENTRY)
+    unpacker = _unpacker(src, dst, len(payload), _PACKED_RETURN, _PACKED_ENTRY)
     mem[_PACKED_ENTRY : _PACKED_ENTRY + len(unpacker)] = unpacker
     mem[src : src + len(payload)] = payload
     prg = bytes((_PACKED_LOAD & 0xFF, (_PACKED_LOAD >> 8) & 0xFF)) + bytes(
@@ -288,93 +253,30 @@ def build_playable_sid(load=0x1000):
     yield a changing SID register grid. Pure functional 6502 -- no copyrighted
     engine bytes.
     """
-    counter = load + 0x02  # RAM cell just past the load address
-    init = load + 0x10
-    play = load + 0x20
-    end = load + 0x40
-    body = bytearray(end - load)
-    init_code = bytes(
+    counter, init, play = load + 0x02, load + 0x10, load + 0x20
+    body = bytearray(0x40)
+    for org, src in (
+        (init, f"LDA #$0F\nSTA $D418\nLDA #$00\nSTA ${counter:04X}\nRTS"),
         (
-            0xA9,
-            0x0F,
-            0x8D,
-            0x18,
-            0xD4,
-            0xA9,
-            0x00,
-            0x8D,
-            counter & 0xFF,
-            counter >> 8,
-            0x60,
-        )
-    )
-    play_code = bytes(
-        (
-            0xAD,
-            0x12,
-            0xD0,  # LDA $D012 (VIC raster read observer)
-            0xAD,
-            0x1B,
-            0xD4,  # LDA $D41B (voice-3 osc read observer)
-            0xEE,
-            counter & 0xFF,
-            counter >> 8,  # INC counter
-            0xAD,
-            counter & 0xFF,
-            counter >> 8,  # LDA counter
-            0x8D,
-            0x00,
-            0xD4,  # STA $D400 (voice-1 freq lo)
-            0x8D,
-            0x07,
-            0xD4,  # STA $D407 (voice-2 freq lo)
-            0x60,  # RTS
-        )
-    )
-    body[init - load : init - load + len(init_code)] = init_code
-    body[play - load : play - load + len(play_code)] = play_code
+            play,
+            f"LDA $D012\nLDA $D41B\nINC ${counter:04X}\nLDA ${counter:04X}\n"
+            "STA $D400\nSTA $D407\nRTS",
+        ),
+    ):
+        code = assemble(src, org)[0]
+        body[org - load : org - load + len(code)] = code
     return _psid(bytes(body), load, init, play)
 
 
 IRQ_LOAD = 0x1000
+IRQ_MAIN = 0x1030
 IRQ_HANDLER = 0x1040
 IRQ_COUNTER = 0x10F0
 
 
-def _word(value):
-    return bytes((value & 0xFF, value >> 8))
-
-
-def _sta(addr, value):
-    """``LDA #value / STA addr``."""
-    return bytes((0xA9, value, 0x8D)) + _word(addr)
-
-
 def _bump(reg):
-    """``INC counter / LDA counter / STA $D400+reg`` (9 bytes)."""
-    return (
-        b"\xee"
-        + _word(IRQ_COUNTER)
-        + b"\xad"
-        + _word(IRQ_COUNTER)
-        + b"\x8d"
-        + _word(0xD400 + reg)
-    )
-
-
-def _setup(source, vector):
-    """Init code installing the handler and programming the interrupt ``source``."""
-    lo, hi = _word(IRQ_HANDLER)
-    code = b"\x78" + _sta(vector, lo) + _sta(vector + 1, hi)
-    if source == "raster":
-        code += (_sta(0xDC0D, 0x7F) + _sta(0xD01A, 0x01) + _sta(0xD011, 0x1B)) + _sta(
-            0xD012, 0x80
-        )
-    else:
-        cia = 0xDD00 if source == "nmi" else 0xDC00
-        code += _sta(cia + 4, 0xC7) + _sta(cia + 5, 0x4C) + _sta(cia + 0xD, 0x81)
-        code += _sta(cia + 0xE, 0x11)
-    return code + _sta(0xD418, 0x0F)
+    """``INC counter / LDA counter / STA $D400+reg``."""
+    return f"INC ${IRQ_COUNTER:04X}\nLDA ${IRQ_COUNTER:04X}\nSTA ${0xD400 + reg:04X}\n"
 
 
 def build_irq_sid(source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D):
@@ -391,32 +293,36 @@ def build_irq_sid(source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D)
     into ``$D415``; without ``cli`` interrupts stay masked. Functional 6502
     written for the tests -- no tune bytes.
     """
+    nmi, kernal = source == "nmi", bank & 2
     if source == "raster":
-        init = _setup(source, 0x0314)
-        status = b"\xad\x19\xd0" + bytes((ack, 0x19, 0xD0)) + b"\x10\x09"
-        handler = status + _bump(0) + b"\xad\x19\xd0\x8d\x01\xd4\x4c\x31\xea"
+        init, vector = "", 0x0314
+        program = "LDA #$7F\nSTA $DC0D\nLDA #$01\nSTA $D01A\nLDA #$1B\nSTA $D011\n"
+        program += "LDA #$80\nSTA $D012\n"
+        handler = f"LDA $D019\n.byte ${ack:02X}, $19, $D0\nBPL skip\n" + _bump(0)
+        handler += "skip: LDA $D019\nSTA $D401\nJMP $EA31\n"
     else:
-        nmi, kernal = source == "nmi", bank & 2
-        icr = 0xDD0D if nmi else 0xDC0D
+        init = f"LDA #${bank:02X}\nSTA $01\n"
+        cia, reg = (0xDD00, 14) if nmi else (0xDC00, 7)
         vector = (
             (0x0318 if kernal else 0xFFFA) if nmi else (0x0314 if kernal else 0xFFFE)
         )
-        init = bytes((0xA9, bank, 0x85, 0x01)) + _setup(source, vector)
+        program = "".join(
+            f"LDA #${v:02X}\nSTA ${cia + r:04X}\n"
+            for r, v in ((4, 0xC7), (5, 0x4C), (0xD, 0x81), (0xE, 0x11))
+        )
         save = nmi or not kernal
-        handler = (b"\x48" if save else b"") + b"\xad" + _word(icr) + b"\x10\x09"
-        reg = 14 if nmi else 7
-        handler += _bump(reg) + b"\xad" + _word(icr) + b"\x8d" + _word(0xD401 + reg)
-        handler += b"\x68" if save else b""
-        if kernal:
-            handler += b"\x4c" + _word(0xFE47 if nmi else 0xEA31)
-        else:
-            handler += b"\x40"
-    main = IRQ_LOAD + 0x30
-    init += (b"\x58" if cli else b"") + (b"\x4c" + _word(main) if loop else b"\x60")
-    counter = _word(IRQ_COUNTER + 1)
-    spin = b"\xee" + counter + b"\xad" + counter + b"\x8d\x15\xd4\x4c" + _word(main)
+        handler = ("PHA\n" if save else "") + f"LDA ${cia + 0xD:04X}\nBPL skip\n"
+        handler += _bump(reg) + f"skip: LDA ${cia + 0xD:04X}\nSTA ${0xD401 + reg:04X}\n"
+        handler += "PLA\n" if save else ""
+        handler += f"JMP ${0xFE47 if nmi else 0xEA31:04X}\n" if kernal else "RTI\n"
+    init += f"SEI\nLDA #${IRQ_HANDLER & 0xFF:02X}\nSTA ${vector:04X}\n"
+    init += f"LDA #${IRQ_HANDLER >> 8:02X}\nSTA ${vector + 1:04X}\n{program}"
+    init += "LDA #$0F\nSTA $D418\n" + ("CLI\n" if cli else "")
+    init += f"JMP ${IRQ_MAIN:04X}\n" if loop else "RTS\n"
+    counter = f"${IRQ_COUNTER + 1:04X}"
+    spin = f"INC {counter}\nLDA {counter}\nSTA $D415\nJMP ${IRQ_MAIN:04X}\n"
     body = bytearray(IRQ_COUNTER + 2 - IRQ_LOAD)
-    body[: len(init)] = init
-    body[main - IRQ_LOAD : main - IRQ_LOAD + len(spin)] = spin
-    body[IRQ_HANDLER - IRQ_LOAD : IRQ_HANDLER - IRQ_LOAD + len(handler)] = handler
-    return _psid(_word(IRQ_LOAD) + bytes(body), 0, IRQ_LOAD, 0, magic=b"RSID")
+    for org, src in ((IRQ_LOAD, init), (IRQ_MAIN, spin), (IRQ_HANDLER, handler)):
+        code = assemble(src, org)[0]
+        body[org - IRQ_LOAD : org - IRQ_LOAD + len(code)] = code
+    return _psid(bytes((IRQ_LOAD & 0xFF, IRQ_LOAD >> 8)) + body, 0, IRQ_LOAD, 0, "RSID")

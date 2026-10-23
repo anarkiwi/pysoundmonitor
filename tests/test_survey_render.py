@@ -7,23 +7,14 @@ import numpy as np
 import pytest
 
 from pysidtracker import SidParseError as BaseSidParseError
+from pysidtracker import cadence as cadence_mod
 from pysidtracker.cadence import Cadence
 from pysidtracker.registers import PAL_CLOCK_HZ, PAL_CYCLES_PER_FRAME
 from pysidtracker.sidid import sidid_signatures
 
-import fetch_tunes
 import helpers
 import oracle_hvsc
 from pysoundmonitor import SidParseError, SoundMonitorPlayer
-from pysoundmonitor import player as player_mod
-
-
-def _tune(relpath):
-    try:
-        return fetch_tunes.fetch(relpath).read_bytes()
-    except Exception as exc:  # pylint: disable=broad-except
-        pytest.skip(f"{relpath} unreachable: {exc}")
-        return b""
 
 
 def _native(data, subtune, nframes):
@@ -47,8 +38,8 @@ def _native(data, subtune, nframes):
         ),
     ],
 )
-def test_render_matches_player_and_reports_build(relpath, info):
-    data = _tune(relpath)
+def test_render_matches_player_and_reports_build(relpath, info, tune):
+    data = tune(relpath).read_bytes()
     grid, got = oracle_hvsc.render(data, 1, 60)
     assert grid.dtype == np.int16 and grid.shape == (60, 25)
     np.testing.assert_array_equal(grid, _native(data, 0, 60))
@@ -60,7 +51,7 @@ def test_render_matches_player_and_reports_build(relpath, info):
 def test_render_reports_unknown_trigger_and_engine(monkeypatch):
     data = helpers.build_playable_sid()
     unknown = Cadence(PAL_CYCLES_PER_FRAME, None, PAL_CLOCK_HZ)
-    monkeypatch.setattr(player_mod, "playroutine_cadence", lambda *_, **__: unknown)
+    monkeypatch.setattr(cadence_mod, "playroutine_cadence", lambda *_, **__: unknown)
     grid, info = oracle_hvsc.render(data, 1, 20)
     np.testing.assert_array_equal(grid, _native(data, 0, 20))
     assert (info["trigger"], info["speed"], info["engine"]) == (None, 1, None)
@@ -72,8 +63,8 @@ def test_render_plays_an_installed_interrupt():
     assert (info["rsid"], info["trigger"], info["speed"]) == (True, "cia_timer", 1)
 
 
-def test_render_selects_one_based_subtune():
-    data = _tune("DEMOS/M-R/Rape_1_end.sid")
+def test_render_selects_one_based_subtune(tune):
+    data = tune("DEMOS/M-R/Rape_1_end.sid").read_bytes()
     second = oracle_hvsc.render(data, 2, 100)[0]
     np.testing.assert_array_equal(second, _native(data, 1, 100))
     assert (second != oracle_hvsc.render(data, 1, 100)[0]).any()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pysoundmonitor"
-version = "0.5.0"
+version = "0.6.0"
 description = "Pure-Python player, reader and detector for Soundmonitor (64'er / Hulsbeck) SID tunes"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,13 +20,12 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    "pysidtracker>=0.17.1",
+    # TunePlayer runs the replay; survey file --song, cadence_info and the
+    # hvsc test fixture back the scripts and tests.
+    "pysidtracker>=0.28.0",
 ]
 
 [project.optional-dependencies]
-# Audio rendering (SoundMonitorPlayer.render_wav) drives an emulated SID via the
-# base pysidtracker.audio surface; everything else works without it.
-audio = ["pysidtracker>=0.17.1"]
 dev = [
     "black>=26.10.1",
     "pylint>=4.1.2",
