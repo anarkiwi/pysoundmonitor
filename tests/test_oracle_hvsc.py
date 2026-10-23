@@ -23,7 +23,6 @@ whose frame-0 ``v1_freq_hi`` must stay the oracle's 0 baseline. Synthetic RSIDs
 (``helpers``) cover each interrupt a tune can install for itself.
 """
 
-import os
 from pathlib import Path
 
 import pytest
@@ -35,14 +34,14 @@ from pysidtracker.oracle import (
     sidtrace_cadence,
     sidtrace_grid,
 )
-from pysidtracker.testing import oracle_grid, resolve_tune
+from pysidtracker.testing import default_cache, oracle_grid, resolve_tune
 
 import helpers
 from pysoundmonitor import SoundMonitorPlayer
 
-# Cache under the workspace (a Docker-daemon-visible path, and what CI persists
-# via actions/cache). ``$PYSOUNDMONITOR_ORACLE_CACHE`` overrides the location.
-_CACHE = Path(os.environ.get("PYSOUNDMONITOR_ORACLE_CACHE", ".oracle-cache"))
+# Synthetic RSIDs are rendered afresh each run, under the workspace (a
+# Docker-daemon-visible path) but outside the download cache.
+_SYNTHETIC = Path("build/synthetic")
 
 TUNES = {
     # CIA-timed, self-scheduled cadence (section loader latches $DC04/$DC05).
@@ -64,8 +63,6 @@ def _render(data, nframes):
 
 tune_id, oracle_match = make_oracle_fixtures(
     TUNES,
-    hvsc_cache=_CACHE / "hvsc",
-    oracle_cache=_CACHE / "csv",
     render=_render,
     frames=250,
 )
@@ -85,10 +82,10 @@ SIDEWALK_FRAMES = 250
 @pytest.mark.oracle
 @pytest.mark.parametrize("song", range(1, SIDEWALK_SONGS + 1))
 def test_sidewalk_subtunes_match_the_oracle(song):
-    path = resolve_tune(SIDEWALK, cache_dir=_CACHE / "hvsc", local_env="HVSC")
+    path = resolve_tune(SIDEWALK)
     assert path is not None, "tune unavailable"
     data = Path(path).read_bytes()
-    csv = _CACHE / "csv" / f"sidewalk-{song}.csv.zst"
+    csv = default_cache("csv") / f"sidewalk-{song}.csv.zst"
     seconds = SIDEWALK_FRAMES // 50 + 2
     rows = cached_sidtrace(Path(path), csv, seconds=seconds, song=song)
     oracle = sidtrace_grid(rows, cycles_per_frame=sidtrace_cadence(rows))[
@@ -114,7 +111,7 @@ def test_sidewalk_subtunes_match_the_oracle(song):
 )
 def test_installed_interrupt_matches_oracle(name, kwargs):
     data = helpers.build_irq_sid(**kwargs)
-    sid = _CACHE / "synthetic" / f"{name}.sid"
+    sid = _SYNTHETIC / f"{name}.sid"
     sid.parent.mkdir(parents=True, exist_ok=True)
     sid.write_bytes(data)
     oracle = oracle_grid(
