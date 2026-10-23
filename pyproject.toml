@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     # TunePlayer runs the replay; survey file --song, cadence_info and the
     # hvsc test fixture back the scripts and tests.
-    "pysidtracker>=0.28.0",
+    "pysidtracker>=0.30.0",
 ]
 
 [project.optional-dependencies]

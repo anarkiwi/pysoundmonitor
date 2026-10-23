@@ -164,7 +164,7 @@ python -m pysidtracker.survey triage .hvsc-survey
 PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC .hvsc-survey/tunes.csv <md5>_<song> \
     --work .hvsc-survey --render oracle_hvsc:render
 PYTHONPATH=scripts python -m pysidtracker.survey file oracle_hvsc:render tune.sid \
-    --song all --frames 250 --work .oracle-cache
+    --song all --frames 250 --work .tunecache/csv
 ```
 
 `file` gives one `.sid`'s subtunes (`--song all`, or `1,4-6`) the same

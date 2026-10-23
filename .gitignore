@@ -217,14 +217,15 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# pysidtracker fetch cache: HVSC test tunes (copyright works -- never
-# committed), sidplayfp power-on image, ROMs.
+# pysidtracker download cache: HVSC test tunes (copyright works -- never
+# committed), ROMs and sidtrace oracle traces.
 .tunecache/
 *.sid
 *.prg
 *.wav
 *.sidwr.bin
-# Oracle cache: fetched HVSC tunes + derived sidtrace register traces (CI-cached).
-.oracle-cache/
+# Core dumps.
+/core
+core.[0-9]*
 # HVSC oracle survey work tree (copyright-derived traces).
 .hvsc-survey/
