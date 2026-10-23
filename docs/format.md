@@ -93,7 +93,7 @@ hi table's octave-ramp signature.
 
 ## Player and playback notes
 
-`SoundMonitorPlayer` is a [`pysidtracker.MemPlayer`](https://github.com/anarkiwi/pysidtracker)
+`SoundMonitorPlayer` is a [`pysidtracker.TunePlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md)
 subclass that reproduces the replay byte-exact. Rather than re-transcribe the
 copyrighted, relocatable player for each build, it runs the tune's **own** 6502
 `init`/`play` over the shared 64 KiB memory image (with the VIC-raster and
@@ -106,7 +106,7 @@ from pysoundmonitor import SoundMonitorPlayer
 player = SoundMonitorPlayer(open("tune.sid", "rb").read())
 grid = player.render_grid(250)               # 25-reg, forward-filled per frame
 writes = list(player.register_writes(250))   # pysidtracker RegWrite log
-player.render_wav("tune.wav", 250)           # needs the `audio` extra
+player.render_wav("tune.wav", 250)           # pysidtracker.audio, emulated SID
 ```
 
 Both replay variations are reproduced and validated: the **CIA-timed** cohort
@@ -120,7 +120,7 @@ cycles/call, and `song.cia_latch`).
 ### Tunes that install their own interrupt
 
 A header play address of 0 (every Soundmonitor RSID) means init installs the
-play handler itself. `SoundMonitorPlayer` then plays the tune under
+play handler itself. `TunePlayer` then plays the tune under
 [`pysidtracker.irqhost.InterruptPlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md),
 which boots and runs it as the sidtrace oracle's sidplayfp does: the PSID driver
 from power-on, every interrupt the tune programs (VIC raster, CIA #1 Timer A/B
@@ -151,11 +151,11 @@ of every HVSC tune SIDId names `Soundmonitor`. Its `info` reports the `engine`
 anchor the reader recognises (`cia_loader`, `note_freq` or `null`), `rsid`, the
 play `trigger` (`pal_video` / `ntsc_video` / `cia_timer` / `nmi_timer`, or
 `null` when unknown), `speed` (play calls per PAL frame) and `dynamic` (variable
-timer). Tunes the player rejects raise `SidParseError`, a
+timer), the last four from `pysidtracker.cadence.cadence_info`. Tunes the player rejects raise `SidParseError`, a
 `pysidtracker.SidParseError`, so the survey counts them as `not_decompiled`.
 
 ```bash
-pip install "pysidtracker[survey]>=0.14.0"
+pip install "pysidtracker[survey]>=0.28.0"
 python -m pysidtracker.survey find $HVSC --player '^Soundmonitor$' --out .hvsc-survey/tunes.csv
 PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
     --work .hvsc-survey --render oracle_hvsc:render --jobs 32
@@ -163,7 +163,12 @@ python -m pysidtracker.survey report .hvsc-survey/results.csv
 python -m pysidtracker.survey triage .hvsc-survey
 PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC .hvsc-survey/tunes.csv <md5>_<song> \
     --work .hvsc-survey --render oracle_hvsc:render
+PYTHONPATH=scripts python -m pysidtracker.survey file oracle_hvsc:render tune.sid \
+    --song all --frames 250 --work .oracle-cache
 ```
+
+`file` gives one `.sid`'s subtunes (`--song all`, or `1,4-6`) the same
+verdicts, leads and differing registers without a `find` CSV.
 
 `results.csv` is written when `run` finishes. `.hvsc-survey/` holds
 copyright-derived traces and is gitignored.

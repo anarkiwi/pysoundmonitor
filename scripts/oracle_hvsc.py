@@ -6,7 +6,7 @@
 
 import numpy as np
 from pysidtracker import SidImage
-from pysidtracker.registers import PAL_CYCLES_PER_FRAME
+from pysidtracker.cadence import cadence_info
 
 from pysoundmonitor import SoundMonitorPlayer
 from pysoundmonitor.reader import find_cia_fingerprint, find_fingerprint
@@ -23,13 +23,7 @@ def _engine(image):
 
 def render(data, song, nframes):
     """Render 1-based ``song`` of a Soundmonitor ``.sid`` and the build it carries."""
-    player = SoundMonitorPlayer(data, song - 1)
-    cadence = player.cadence
-    info = {
-        "engine": _engine(SidImage.from_bytes(data)),
-        "rsid": data[:4] == b"RSID",
-        "trigger": cadence.source and cadence.source.value,
-        "speed": round(PAL_CYCLES_PER_FRAME / cadence.cycles_per_call),
-        "dynamic": cadence.dynamic,
-    }
-    return np.asarray(player.render_grid(nframes), np.int16), info
+    grid = SoundMonitorPlayer(data, song - 1).render_grid(nframes)
+    info = {"engine": _engine(SidImage.from_bytes(data))}
+    info.update(cadence_info(data, song))
+    return np.asarray(grid, np.int16), info

@@ -5,7 +5,7 @@ addresses are not a reliable locator, so this package finds the engine by a smal
 hardware-register fingerprint and decodes the documented section->stream song
 structures into a :class:`Song` model. :class:`SoundMonitorPlayer` reproduces the
 replay byte-exact (validated against the ``sidtrace`` oracle) by running the
-tune's own 6502 ``init``/``play`` over the shared :class:`~pysidtracker.MemPlayer`.
+tune's own 6502 ``init``/``play`` on the shared :class:`~pysidtracker.TunePlayer`.
 """
 
 from .errors import SidParseError, SoundMonitorError
@@ -20,7 +20,7 @@ from .model import (
 from .player import SoundMonitorPlayer, SoundMonitorSidParser
 from .reader import find_fingerprint, parse, read
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     "FilterTail",

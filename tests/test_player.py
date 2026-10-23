@@ -10,11 +10,11 @@ Docker oracle. Byte-exact validation against real HVSC tunes lives in the
 import pytest
 
 from pysidtracker import Cadence, MemPlayer, RegWrite, SidImage, TriggerSource
+from pysidtracker import irqhost
 from pysidtracker import registers as reg
 
 import helpers
 from pysoundmonitor import SidParseError, SoundMonitorPlayer, SoundMonitorSidParser
-from pysoundmonitor import player as player_mod
 
 
 def test_player_is_memplayer():
@@ -161,6 +161,6 @@ def test_cadence_follows_subtune(monkeypatch):
         seen.append(subtune)
         return Cadence(19656, TriggerSource.PAL_VIDEO, reg.PAL_CLOCK_HZ)
 
-    monkeypatch.setattr(player_mod, "playroutine_cadence", cadence)
+    monkeypatch.setattr(irqhost, "playroutine_cadence", cadence)
     assert SoundMonitorPlayer(helpers.build_playable_sid(), 1).cadence.source
     assert seen == [1]

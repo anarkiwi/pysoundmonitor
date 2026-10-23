@@ -32,12 +32,10 @@ from pysidtracker import make_oracle_fixtures
 from pysidtracker.oracle import (
     aligned_match,
     cached_sidtrace,
-    read_sidtrace,
-    run_sidtrace,
     sidtrace_cadence,
     sidtrace_grid,
 )
-from pysidtracker.testing import resolve_tune
+from pysidtracker.testing import oracle_grid, resolve_tune
 
 import helpers
 from pysoundmonitor import SoundMonitorPlayer
@@ -119,7 +117,8 @@ def test_installed_interrupt_matches_oracle(name, kwargs):
     sid = _CACHE / "synthetic" / f"{name}.sid"
     sid.parent.mkdir(parents=True, exist_ok=True)
     sid.write_bytes(data)
-    trace = run_sidtrace(sid, sid.with_suffix(".csv.zst"), seconds=3)
-    oracle = sidtrace_grid(read_sidtrace(trace))[:100]
+    oracle = oracle_grid(
+        sid, oracle_cache=sid.parent, seconds=3, frames=100, force=True
+    )
     assert len(oracle) == 100
     assert SoundMonitorPlayer(data).render_grid(100) == oracle
