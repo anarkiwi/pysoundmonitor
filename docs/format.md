@@ -148,10 +148,12 @@ into the
 [`pysidtracker.survey`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/survey.md)
 whole-song comparison against the `sidtrace` oracle (Docker), over every subtune
 of every HVSC tune SIDId names `Soundmonitor`. Its `info` reports the `engine`
-anchor the reader recognises (`cia_loader`, `note_freq` or `null`), `rsid`, the
+anchor the reader recognises on the materialised image (`cia_loader` or
+`note_freq`), the `stage` that produced the decode (`direct`, `relocated` after
+init, or `packed`), `rsid`, the
 play `trigger` (`pal_video` / `ntsc_video` / `cia_timer` / `nmi_timer`, or
 `null` when unknown), `speed` (play calls per PAL frame) and `dynamic` (variable
-timer), the last four from `pysidtracker.cadence.cadence_info`. Tunes the player rejects raise `SidParseError`, a
+timer), the last four from `pysidtracker.cadence.cadence_info`. Tunes the reader does not recognise (e.g. other players) or cannot decode raise `SidParseError`, a
 `pysidtracker.SidParseError`, so the survey counts them as `not_decompiled`.
 
 ```bash

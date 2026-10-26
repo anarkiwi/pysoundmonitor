@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pathlib
 import tempfile
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from pysidtracker import (
     EmulatorUnavailable,
@@ -417,23 +417,42 @@ def _copy_image(image: SidImage) -> SidImage:
     )
 
 
-def _materialized(image: SidImage) -> Optional[SidImage]:
-    """A decodable-into-a-song copy of ``image`` (init/unpacked), else ``None``.
+def _materialize(image: SidImage) -> Optional[Tuple[SidImage, str]]:
+    """A decodable-into-a-song copy of ``image`` and the stage that produced it.
 
-    Tries the as-loaded RAM, then an emulated init (relocated builds), then the
-    KERNAL-host unpack of a bare packed PRG's SYS stubs; works on a copy so the
-    caller's image is never mutated.
+    Tries the as-loaded RAM (``"direct"``), then an emulated init for relocated
+    builds (``"relocated"``), then the KERNAL-host unpack of a bare packed PRG's
+    SYS stubs (``"packed"``); works on a copy so the caller's image is never
+    mutated. ``None`` when no stage decodes.
     """
     probe = _copy_image(image)
     if _decode_song(probe) is not None:
-        return probe
+        return probe, "direct"
     if _run_init(probe) and _decode_song(probe) is not None:
-        return probe
+        return probe, "relocated"
     if probe.header is None:
         ram = _unpack_mem(probe)
         if ram is not None and _decode_song(_ram_image(ram)) is not None:
-            return _ram_image(ram)
+            return _ram_image(ram), "packed"
     return None
+
+
+def _materialized(image: SidImage) -> Optional[SidImage]:
+    """The :func:`_materialize` image (init/unpacked), else ``None``."""
+    result = _materialize(image)
+    return result[0] if result is not None else None
+
+
+def materialization(data: bytes) -> Tuple[SidImage, str]:
+    """The materialised image of ``data`` and its stage (direct/relocated/packed).
+
+    Raises :class:`SidParseError` when the image never decodes into a song.
+    """
+    result = _materialize(SidImage.from_bytes(data))
+    if result is None:
+        parse(data)  # raises the specific SidParseError
+        raise SidParseError("Soundmonitor image did not materialise into a song")
+    return result
 
 
 def parse(data: bytes) -> Song:
