@@ -188,11 +188,6 @@ def _plan(image: SidImage) -> tuple:
     return best
 
 
-def _recover_base(image: SidImage) -> int:
-    """The chosen data-region base address (see :func:`_plan`)."""
-    return _plan(image)[0]
-
-
 def _decode_stream(image: SidImage, addr: int, rows: int) -> List[Row]:
     out: List[Row] = []
     rows = min(rows, c.MAX_PATTERN_LEN)
@@ -280,15 +275,6 @@ def _decode_instruments(
         record = image.slice(addr, c.INSTRUMENT_STRIDE)
         out.append(Instrument.from_record(index, record))
     return out
-
-
-def decode_note_freq(
-    image: SidImage, addr: int, length: int = c.NOTE_FREQ_LEN
-) -> NoteFreqTable:
-    """Decode the parallel hi/lo note-frequency tables at ``addr``."""
-    hi = list(image.slice(addr, length))
-    lo = list(image.slice(addr + length, length))
-    return NoteFreqTable(hi=hi, lo=lo, addr=addr)
 
 
 def locate_note_freq(image: SidImage) -> Optional[NoteFreqTable]:

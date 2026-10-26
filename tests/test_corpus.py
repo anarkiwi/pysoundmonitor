@@ -15,10 +15,10 @@ unreachable after retries.
 Each tune must:
   * ``parse``/``read`` into a :class:`~pysoundmonitor.model.Song`;
   * ``SoundMonitorSidParser().detect()`` classify it (recognised);
-  * locate its note-frequency tables (gap #1 -- the locator finds them on real
+  * locate its note-frequency tables (the locator finds them on real
     tunes, not just the synthetic fixtures); and
   * decode a bounded, sane section set -- non-empty and strictly under the
-    ``MAX_SECTIONS`` walk cap (gap #2 -- section bounds come from the player's
+    ``MAX_SECTIONS`` walk cap; section bounds come from the player's
     own operands, not a walk that runs a relocation-dependent table into the cap).
 """
 
@@ -83,9 +83,9 @@ def test_corpus_tune_decodes(rel, tune):
 
     song = read(path)
     assert song.player_anchor
-    # gap #2: a bounded, sane section set (never the walk cap, never empty).
+    # A bounded, sane section set (never the walk cap, never empty).
     assert 0 < len(song.sections) < c.MAX_SECTIONS
     assert song.cia_latch is not None
-    # gap #1: the note-frequency tables are located on the real tune.
+    # The note-frequency tables are located on the real tune.
     assert song.note_freq is not None
     assert len(song.note_freq.hi) == len(song.note_freq.lo) == c.NOTE_FREQ_LEN
