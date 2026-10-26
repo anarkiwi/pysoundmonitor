@@ -28,7 +28,7 @@ jobs:
       - name: Cache downloads
         # HVSC tunes are copyright works and are NEVER committed; they are
         # fetched from the HVSC mirror into pysidtracker's cache, persisted here.
-        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.30.0
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.37.0
         with:
           key: ${{ hashFiles('tests/*.py') }}
           tunes: tests
@@ -54,7 +54,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Cache tunes and oracle traces
-        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.30.0
+        uses: anarkiwi/pysidtracker/.github/actions/cache@v0.37.0
         with:
           key: ${{ hashFiles('tests/test_oracle_hvsc.py') }}
           sidtrace: "true"
