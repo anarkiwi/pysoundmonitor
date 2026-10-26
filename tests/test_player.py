@@ -164,3 +164,12 @@ def test_cadence_follows_subtune(monkeypatch):
     monkeypatch.setattr(irqhost, "playroutine_cadence", cadence)
     assert SoundMonitorPlayer(helpers.build_playable_sid(), 1).cadence.source
     assert seen == [1]
+
+
+def test_soundmonitor_format_surface():
+    # pylint: disable=import-outside-toplevel
+    from pysoundmonitor.formats import soundmonitor_format
+
+    fmt = soundmonitor_format()
+    assert fmt.name == "soundmonitor"
+    assert fmt.parser.error_class.__name__ == "SidParseError"

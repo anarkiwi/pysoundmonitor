@@ -36,6 +36,9 @@ dev = [
     "zstandard>=0.25.0",
 ]
 
+[project.entry-points."pysidtracker.formats"]
+soundmonitor = "pysoundmonitor.formats:soundmonitor_format"
+
 [project.urls]
 Homepage = "https://github.com/anarkiwi/pysoundmonitor"
 Source = "https://github.com/anarkiwi/pysoundmonitor"
