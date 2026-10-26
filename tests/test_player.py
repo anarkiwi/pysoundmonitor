@@ -172,7 +172,7 @@ def test_soundmonitor_format_surface():
 
     fmt = soundmonitor_format()
     assert fmt.name == "soundmonitor"
-    data = helpers.build_sid()
+    data, _ = helpers.build_sid()
     assert fmt.parser.recognize(SidImage.from_bytes(data))
     tune = fmt.load(data, 0)
     assert isinstance(tune, SoundMonitorTune)
