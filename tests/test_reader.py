@@ -9,11 +9,8 @@ from pysoundmonitor import SidParseError, parse, read
 from pysoundmonitor import constants as c
 from pysoundmonitor import reader
 from pysoundmonitor.reader import (
-    _recover_base,
     _run_init,
-    decode_note_freq,
     find_fingerprint,
-    locate_note_freq,
 )
 
 
@@ -105,21 +102,6 @@ def test_parse_no_fingerprint_raises():
         parse(helpers.build_no_fingerprint())
 
 
-def test_recover_base_fallback_without_operands():
-    data, anchor = helpers.build_sid(with_operands=False)
-    image = SidImage.from_bytes(data)
-    assert find_fingerprint(image) == anchor
-    assert _recover_base(image) == 0x1000  # image.load fallback
-
-
-def test_recover_base_from_operands():
-    data, _ = helpers.build_sid(with_operands=True)
-    image = SidImage.from_bytes(data)
-    assert _recover_base(image) == 0x1000
-    # still decodes with the operand-recovered base
-    assert len(parse(data).sections) == 1
-
-
 def test_find_fingerprint_absent():
     image = SidImage.from_prg(bytes((0x00, 0x10)) + bytes(0x100))
     assert find_fingerprint(image) is None
@@ -165,12 +147,3 @@ def test_run_init_emulator_unavailable_is_noop(monkeypatch):
 
     monkeypatch.setattr(reader, "run_init", _boom)
     assert _run_init(image) is False
-
-
-def test_decode_note_freq_direct():
-    data, _ = helpers.build_sid(with_freq=True)
-    image = SidImage.from_bytes(data)
-    table = locate_note_freq(image)
-    assert table is not None
-    direct = decode_note_freq(image, table.addr)
-    assert direct.hi == table.hi and direct.lo == table.lo

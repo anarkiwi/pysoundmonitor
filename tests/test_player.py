@@ -37,7 +37,7 @@ def test_init_seeds_volume():
 
 
 def test_unwritten_register_holds_the_oracle_zero_baseline():
-    """Issue #20: the boot image models the uninitialised SID file at the chip's 0 reset state.
+    """The boot image models the uninitialised SID file at the chip's 0 reset state.
 
     A register the tune never writes must read the oracle's 0 baseline, not the
     power-on RAM byte; the player then seeds volume as the PSID driver does.

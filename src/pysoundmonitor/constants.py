@@ -33,7 +33,7 @@ LDA_ABSX = 0xBD
 # ``CPX abs`` / ``LDX abs`` opcodes: the section-advance code compares the live
 # section index against ``sec_last`` (``CPX``) and reloads ``sec_start``
 # (``LDX``) from two adjacent player globals, so their operands recover the song
-# section bounds relocation-tolerantly (see ``_recover_section_bounds``).
+# section bounds relocation-tolerantly (see ``_bounds_candidates``).
 CPX_ABS = 0xEC
 LDX_ABS = 0xAE
 
@@ -41,19 +41,15 @@ LDX_ABS = 0xAE
 # The per-tune data region is a run of page-aligned split (lo/hi) pointer and
 # transpose tables indexed by the section number, followed by the instrument
 # records. Layout mirrors the Only_3 map ($A000 base) from the architecture doc.
-PAGE = 0x100
 V0_PTR_LO = 0x000
 V0_PTR_HI = 0x100
 V0_XPOSE = 0x200
-V0_XPOSE2 = 0x300
 V1_PTR_LO = 0x400
 V1_PTR_HI = 0x500
 V1_XPOSE = 0x600
-V1_XPOSE2 = 0x700
 V2_PTR_LO = 0x800
 V2_PTR_HI = 0x900
 V2_XPOSE = 0xA00
-V2_XPOSE2 = 0xB00
 SECTION_HEADER_PTR_LO = 0xC00
 SECTION_HEADER_PTR_HI = 0xD00
 INSTRUMENTS = 0xE00
@@ -73,7 +69,6 @@ FILTER_TAIL_LEN = 8
 # record[16] doubles as the filter-tail vol/mode byte and the "no tail" marker.
 FILTER_MARKER = 16
 NO_FILTER_TAIL = 0xFF
-MAX_INSTRUMENTS = INSTRUMENT_STRIDE  # ctrl low-nibble + base can reach this many
 
 # 16-byte instrument record field offsets (architecture doc record map).
 INST_CTRL_GATE = 0  # key-on CTRL (waveform + gate)
@@ -112,7 +107,6 @@ SH_VOL_RAMP = 4  # volume-ramp config ($FF = none)
 SH_BASE_VOL = 5  # steady base-volume nibble
 SH_ARP_TABLE = 6  # start of the 8-entry arp-note table
 ARP_TABLE_LEN = 8
-SECTION_HEADER_LEN = SH_ARP_TABLE + ARP_TABLE_LEN
 
 # --- Pattern rows (per voice, per section: flat 2-byte [note][ctrl] rows) ----
 ROW_LEN = 2

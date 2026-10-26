@@ -73,7 +73,7 @@ def test_render_matches_oracle(oracle_match):  # noqa: F811
     oracle_match()
 
 
-# Issue #20: 20 of these 21 subtunes once differed only in frame-0 v1_freq_hi; every one must now be exact.
+# Every subtune of this tune must match the oracle exactly.
 SIDEWALK = "MUSICIANS/C/Callet_Charles/Sidewalk.sid"
 SIDEWALK_SONGS = 21
 SIDEWALK_FRAMES = 250
