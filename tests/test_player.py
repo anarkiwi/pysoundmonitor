@@ -164,3 +164,19 @@ def test_cadence_follows_subtune(monkeypatch):
     monkeypatch.setattr(irqhost, "playroutine_cadence", cadence)
     assert SoundMonitorPlayer(helpers.build_playable_sid(), 1).cadence.source
     assert seen == [1]
+
+
+def test_soundmonitor_format_surface():
+    # pylint: disable=import-outside-toplevel
+    from pysoundmonitor.formats import SoundMonitorTune, soundmonitor_format
+
+    fmt = soundmonitor_format()
+    assert fmt.name == "soundmonitor"
+    data, _ = helpers.build_sid()
+    assert fmt.parser.recognize(SidImage.from_bytes(data))
+    tune = fmt.load(data, 0)
+    assert isinstance(tune, SoundMonitorTune)
+    assert tune.init_addr == SidImage.from_bytes(data).header.init_address
+    assert any(line.startswith("sections:") for line in fmt.describe(tune))
+    playable = SoundMonitorTune(tune.song, helpers.build_playable_sid(), 0)
+    assert isinstance(fmt.player(playable), SoundMonitorPlayer)
