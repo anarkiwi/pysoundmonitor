@@ -8,9 +8,7 @@ import helpers
 from pysoundmonitor import SidParseError, parse, read
 from pysoundmonitor import constants as c
 from pysoundmonitor.reader import (
-    decode_note_freq,
     find_fingerprint,
-    locate_note_freq,
     locate_song,
 )
 
@@ -158,12 +156,3 @@ def test_locate_failure_carries_rejection_log():
     assert "fingerprint not found" in located.describe()
     with pytest.raises(SidParseError, match="no layout found"):
         located.require(SidParseError)
-
-
-def test_decode_note_freq_direct():
-    data, _ = helpers.build_sid(with_freq=True)
-    image = SidImage.from_bytes(data)
-    table = locate_note_freq(image)
-    assert table is not None
-    direct = decode_note_freq(image, table.addr)
-    assert direct.hi == table.hi and direct.lo == table.lo

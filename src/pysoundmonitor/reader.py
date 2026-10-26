@@ -328,15 +328,6 @@ def _decode_instruments(
     return out
 
 
-def decode_note_freq(
-    image: SidImage, addr: int, length: int = c.NOTE_FREQ_LEN
-) -> NoteFreqTable:
-    """Decode the parallel hi/lo note-frequency tables at ``addr``."""
-    hi = list(image.slice(addr, length))
-    lo = list(image.slice(addr + length, length))
-    return NoteFreqTable(hi=hi, lo=lo, addr=addr)
-
-
 def locate_note_freq(image: SidImage) -> Optional[NoteFreqTable]:
     """Locate and decode the note-frequency tables, or ``None``.
 

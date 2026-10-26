@@ -5,32 +5,29 @@
 """
 
 import numpy as np
-from pysidtracker import SidImage
 from pysidtracker.cadence import cadence_info
 
-from pysoundmonitor import SidParseError, SoundMonitorPlayer, parse
-from pysoundmonitor.reader import engine_entry
+from pysoundmonitor import SoundMonitorPlayer, parse
 
 PLAYER = "^Soundmonitor$"
 
+# The variant's materialisation strategy, named for the survey's ``stage``.
+_STAGES = {"static": "direct", "after-init": "relocated", "sys-unpack": "packed"}
 
-def _build(data):
-    """The build the reader recognises: its facets, else the raw image's engine.
 
-    A tune that decodes reports every variant facet with its source; one that
-    only carries the engine fingerprint (an unexpanded packed stream) reports the
-    engine alone, and a non-Soundmonitor image reports none.
-    """
-    try:
-        return parse(data).variant.as_info()
-    except SidParseError:
-        engine = engine_entry(SidImage.from_bytes(data))
-        return {"engine": engine.value if engine is not None else None}
+def _play(data, song, nframes):
+    grid = SoundMonitorPlayer(data, song - 1).render_grid(nframes)
+    return np.asarray(grid, np.int16), cadence_info(data, song)
 
 
 def render(data, song, nframes):
-    """Render 1-based ``song`` of a Soundmonitor ``.sid`` and the build it carries."""
-    grid = SoundMonitorPlayer(data, song - 1).render_grid(nframes)
-    info = _build(data)
-    info.update(cadence_info(data, song))
-    return np.asarray(grid, np.int16), info
+    """Render 1-based ``song`` of a Soundmonitor ``.sid`` and the build it carries.
+
+    A tune that never materialises into a song raises ``SidParseError`` (counted
+    ``not_decompiled``). ``info`` carries every variant facet with its source;
+    ``stage`` names the materialisation stage (direct, relocated or packed).
+    """
+    variant = parse(data).variant
+    grid, info = _play(data, song, nframes)
+    stage = _STAGES[variant["materialisation"]]
+    return grid, {**variant.as_info(), "stage": stage, **info}
