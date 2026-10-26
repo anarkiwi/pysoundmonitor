@@ -26,11 +26,21 @@ def _native(data, subtune, nframes):
     [
         (
             "MUSICIANS/J/JAP/Only_3.sid",
-            {"engine": "cia_loader", "rsid": False, "trigger": "cia_timer"},
+            {
+                "engine": "cia_loader",
+                "stage": "direct",
+                "rsid": False,
+                "trigger": "cia_timer",
+            },
         ),
         (
             "MUSICIANS/V/Vulgarik/Fi.sid",
-            {"engine": "note_freq", "rsid": False, "trigger": "pal_video"},
+            {
+                "engine": "note_freq",
+                "stage": "direct",
+                "rsid": False,
+                "trigger": "pal_video",
+            },
         ),
         (
             "DEMOS/UNKNOWN/Lavender.sid",
@@ -48,17 +58,17 @@ def test_render_matches_player_and_reports_build(relpath, info, tune):
     assert (got["speed"], got["dynamic"]) == (1, False)
 
 
-def test_render_reports_unknown_trigger_and_engine(monkeypatch):
+def test_play_reports_unknown_trigger(monkeypatch):
     data = helpers.build_playable_sid()
     unknown = Cadence(PAL_CYCLES_PER_FRAME, None, PAL_CLOCK_HZ)
     monkeypatch.setattr(cadence_mod, "playroutine_cadence", lambda *_, **__: unknown)
-    grid, info = oracle_hvsc.render(data, 1, 20)
+    grid, info = oracle_hvsc._play(data, 1, 20)
     np.testing.assert_array_equal(grid, _native(data, 0, 20))
-    assert (info["trigger"], info["speed"], info["engine"]) == (None, 1, None)
+    assert (info["trigger"], info["speed"]) == (None, 1)
 
 
 def test_render_plays_an_installed_interrupt():
-    grid, info = oracle_hvsc.render(helpers.build_irq_sid("cia", bank=0x35), 1, 10)
+    grid, info = oracle_hvsc._play(helpers.build_irq_sid("cia", bank=0x35), 1, 10)
     assert grid[:, 7].tolist() == list(range(1, 11))
     assert (info["rsid"], info["trigger"], info["speed"]) == (True, "cia_timer", 1)
 
@@ -81,6 +91,17 @@ def test_render_selects_one_based_subtune(tune):
 def test_unplayable_raises_sid_parse_error(data):
     with pytest.raises(BaseSidParseError):
         oracle_hvsc.render(data, 1, 10)
+
+
+def test_unrecognised_tune_is_not_decompiled():
+    with pytest.raises(SidParseError):
+        oracle_hvsc.render(helpers.build_playable_sid(), 1, 10)
+
+
+def test_render_reports_materialisation_stage(tune):
+    data = tune("DEMOS/A-F/Big_Boing.sid").read_bytes()
+    info = oracle_hvsc.render(data, 1, 10)[1]
+    assert (info["stage"], info["engine"]) == ("relocated", "note_freq")
 
 
 def test_parse_error_is_survey_not_decompiled():
