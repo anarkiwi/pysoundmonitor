@@ -21,7 +21,7 @@ from pysidtracker.audio import frames_to_seconds, render_player_wav
 
 from .errors import SidParseError
 from .model import Song
-from .reader import _materialized, find_fingerprint, parse
+from .reader import find_fingerprint, locate_song, parse
 
 
 class SoundMonitorPlayer(TunePlayer):
@@ -71,9 +71,7 @@ class SoundMonitorSidParser(BaseSidParser):
         once the image decodes (directly, after init, or after unpack).
         """
         anchor = find_fingerprint(image)
-        return (
-            anchor if anchor is not None and _materialized(image) is not None else None
-        )
+        return anchor if anchor is not None and locate_song(image).ok else None
 
     def player(self, data: bytes, subtune: int = 0) -> SoundMonitorPlayer:
         """Build a :class:`SoundMonitorPlayer` for ``data``."""

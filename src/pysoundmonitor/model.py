@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
 from pysidtracker import NoteFreqTable
+from pysidtracker.facets import Variant
 
 from . import constants as c
 
@@ -188,6 +189,7 @@ class Song:
     sections: List[Section] = field(default_factory=list)
     instruments: List[Instrument] = field(default_factory=list)
     note_freq: Optional[NoteFreqTable] = None
+    variant: Optional[Variant] = None
 
     @property
     def cia_latch(self) -> Optional[int]:

@@ -2,15 +2,14 @@
 
 import pytest
 
-from pysidtracker import EmulatorUnavailable, SidImage
+from pysidtracker import SidImage
 
 import helpers
 from pysoundmonitor import SidParseError, parse, read
 from pysoundmonitor import constants as c
-from pysoundmonitor import reader
 from pysoundmonitor.reader import (
-    _run_init,
     find_fingerprint,
+    locate_song,
 )
 
 
@@ -102,6 +101,23 @@ def test_parse_no_fingerprint_raises():
         parse(helpers.build_no_fingerprint())
 
 
+def test_base_fallback_without_operands():
+    data, anchor = helpers.build_sid(with_operands=False)
+    image = SidImage.from_bytes(data)
+    assert find_fingerprint(image) == anchor
+    variant = parse(data).variant
+    assert variant["base_source"] == "load_page"  # image.load fallback
+    assert variant["bounds_source"] == "default"
+
+
+def test_base_from_operands():
+    data, _ = helpers.build_sid(with_operands=True)
+    song = parse(data)
+    assert song.base == 0x1000
+    assert song.variant["base_source"] == "operand"
+    assert len(song.sections) == 1
+
+
 def test_find_fingerprint_absent():
     image = SidImage.from_prg(bytes((0x00, 0x10)) + bytes(0x100))
     assert find_fingerprint(image) is None
@@ -121,29 +137,22 @@ def test_find_fingerprint_needs_hi_store():
     assert find_fingerprint(image) is None
 
 
-def test_run_init_no_header_is_noop():
-    # A bare .prg has no init address, so init cannot run.
-    _, _ = helpers.build_prg()
-    image = SidImage.from_prg(bytes((0x00, 0x10)) + bytes(0x40))
-    assert _run_init(image) is False
+def test_variant_records_stage_and_engine():
+    data, anchor = helpers.build_sid()
+    variant = parse(data).variant
+    assert variant["materialisation"] == "static"
+    assert variant["engine"] == "cia_loader"
+    assert variant.source("engine").addr == anchor
 
 
-def test_run_init_with_header_runs():
-    data, _ = helpers.build_sid()
-    image = SidImage.from_bytes(data)
-    assert _run_init(image) is True
-    assert image.end == 0x10000
+def test_variant_packed_prg_is_sys_unpack():
+    data, _ = helpers.build_packed_prg()
+    assert parse(data).variant["materialisation"] == "sys-unpack"
 
 
-def test_run_init_emulator_unavailable_is_noop(monkeypatch):
-    # jennings is a required dependency, but if the base emulator is unavailable
-    # run_init raises the BASE EmulatorUnavailable; _run_init must catch it and
-    # fall back to decoding the directly loaded image.
-    data, _ = helpers.build_sid()
-    image = SidImage.from_bytes(data)
-
-    def _boom(_image):
-        raise EmulatorUnavailable("jennings missing")
-
-    monkeypatch.setattr(reader, "run_init", _boom)
-    assert _run_init(image) is False
+def test_locate_failure_carries_rejection_log():
+    located = locate_song(SidImage.from_prg(bytes((0x00, 0x10)) + bytes(0x100)))
+    assert not located.ok
+    assert "fingerprint not found" in located.describe()
+    with pytest.raises(SidParseError, match="no layout found"):
+        located.require(SidParseError)

@@ -7,15 +7,12 @@
 import numpy as np
 from pysidtracker.cadence import cadence_info
 
-from pysoundmonitor import SoundMonitorPlayer
-from pysoundmonitor.reader import find_cia_fingerprint, materialization
+from pysoundmonitor import SoundMonitorPlayer, parse
 
 PLAYER = "^Soundmonitor$"
 
-
-def _engine(image):
-    """How the reader recognises the replay: its CIA section loader or note tables."""
-    return "cia_loader" if find_cia_fingerprint(image) is not None else "note_freq"
+# The variant's materialisation strategy, named for the survey's ``stage``.
+_STAGES = {"static": "direct", "after-init": "relocated", "sys-unpack": "packed"}
 
 
 def _play(data, song, nframes):
@@ -27,9 +24,10 @@ def render(data, song, nframes):
     """Render 1-based ``song`` of a Soundmonitor ``.sid`` and the build it carries.
 
     A tune that never materialises into a song raises ``SidParseError`` (counted
-    ``not_decompiled``); ``engine`` is read off the materialised image and
-    ``stage`` names the stage that produced it (direct, relocated or packed).
+    ``not_decompiled``). ``info`` carries every variant facet with its source;
+    ``stage`` names the materialisation stage (direct, relocated or packed).
     """
-    image, stage = materialization(data)
+    variant = parse(data).variant
     grid, info = _play(data, song, nframes)
-    return grid, {"engine": _engine(image), "stage": stage, **info}
+    stage = _STAGES[variant["materialisation"]]
+    return grid, {**variant.as_info(), "stage": stage, **info}

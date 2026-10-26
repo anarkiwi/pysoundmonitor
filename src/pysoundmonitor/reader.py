@@ -6,34 +6,53 @@ player's own code operands: the engine is recognised by its CIA section-loader
 fingerprint or its note-frequency tables, the data-region base page comes from
 the loader's table-indexing operands, the section bounds from the section-advance
 ``CPX``/``LDX`` operands, and the note-freq tables from the paired ``LDA`` reads.
-A packed/relocating tune is unpacked by emulating its init first. The documented
-structures are then decoded into the model; this is a song-data reader, not a
-playback engine.
+A packed/relocating tune is unpacked by emulating its init first. The stages
+(as loaded, after init, after the BASIC ``SYS`` stub chain) are
+:func:`pysidtracker.locate` strategies: each candidate layout is decoded once, the
+winning stage is recorded as the :class:`Song`'s ``variant`` facets, and a failure
+raises with the full rejection log. This is a song-data reader, not a playback
+engine.
 """
 
 from __future__ import annotations
 
 import pathlib
 import tempfile
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
 from pysidtracker import (
-    EmulatorUnavailable,
     KernalHost,
     KernalHostError,
+    Located,
+    Rejection,
     SidImage,
+    SitePattern,
+    Strategy,
     find_code_all,
+    locate,
     read_bytes,
-    run_init,
     sys_addr,
 )
-from pysidtracker import SidParseError as BaseSidParseError
 from pysidtracker import locate_note_freq as _base_locate_note_freq
+from pysidtracker.detect import Detection, PlayroutineKind
+from pysidtracker.facets import Entry, Variant, detected, inferred
 from pysidtracker.image import MEM_SIZE
+from pysidtracker.locate import AFTER_INIT, STATIC
 
 from . import constants as c
 from .errors import SidParseError
 from .model import Instrument, NoteFreqTable, Row, Section, Song
+from .variant import (
+    BASE_LOAD_PAGE,
+    BOUNDS_DEFAULT,
+    ENGINE_CIA,
+    ENGINE_NOTE_FREQ,
+    SOURCE_OPERAND,
+    STAGE_AFTER_INIT,
+    STAGE_STATIC,
+    STAGE_SYS_UNPACK,
+    make_variant,
+)
 
 # A packed bare PRG unpacks through a short BASIC SYS-stub chain; cap both.
 _MAX_SYS_STAGES = 4
@@ -55,6 +74,14 @@ def _operand_targets(image: SidImage, opcode: int) -> Dict[int, int]:
     return targets
 
 
+# ``STA $DC04 ... CMP #$06 ... STA $DC05`` within the fingerprint window: the gaps
+# are bounded here and the whole match against ``FINGERPRINT_WINDOW`` below.
+_CIA_FINGERPRINT = SitePattern(
+    f"{c.STA_DC04.hex(' ')} ??{{0,{c.FINGERPRINT_WINDOW - 5}}} "
+    f"{c.CMP_06.hex(' ')} ??{{0,{c.FINGERPRINT_WINDOW - 5}}} {c.STA_DC05.hex(' ')}"
+)
+
+
 def find_cia_fingerprint(image: SidImage) -> Optional[int]:
     """Address of the CIA-timer section-loader fingerprint, or ``None``.
 
@@ -64,56 +91,59 @@ def find_cia_fingerprint(image: SidImage) -> Optional[int]:
     are recognised by their note-freq tables instead.
     """
     span = len(c.STA_DC04) + c.FINGERPRINT_WINDOW
-    for pos in image.find_all(c.STA_DC04):
-        window = image.slice(pos, min(span, len(image.mem) - pos))
-        hi = window.find(c.STA_DC05, len(c.STA_DC04))
-        if hi < 0:
-            continue
-        guard = window.find(c.CMP_06, len(c.STA_DC04))
-        if 0 <= guard < hi:
-            return pos
+    for match in _CIA_FINGERPRINT.find_all(image):
+        if match.length <= span:
+            return match.addr
+    return None
+
+
+def engine_entry(image: SidImage) -> Optional[Entry]:
+    """The ``engine`` facet of ``image`` (value and anchor source), or ``None``.
+
+    The CIA section-loader fingerprint when present (the CIA-timed builds), else
+    the note-frequency hi-table address (the fixed-cadence builds carry the same
+    octave-ramp tables, read via paired ``LDA`` operands).
+    """
+    cia = find_cia_fingerprint(image)
+    if cia is not None:
+        return Entry(ENGINE_CIA, detected(cia))
+    table = locate_note_freq(image)
+    if table is not None:
+        return Entry(ENGINE_NOTE_FREQ, detected(table.addr))
     return None
 
 
 def find_fingerprint(image: SidImage) -> Optional[int]:
     """Address of the Soundmonitor engine, or ``None`` -- build-tolerant.
 
-    Returns the CIA section-loader fingerprint when present (the CIA-timed
-    builds), else the note-frequency hi-table address (the fixed-cadence
-    builds carry the same octave-ramp tables, read via paired ``LDA`` operands).
-    Either is a truthy relocation-tolerant anchor for :meth:`detect`.
+    Either anchor (see :func:`engine_entry`) is a truthy relocation-tolerant
+    anchor for :meth:`detect`.
     """
-    cia = find_cia_fingerprint(image)
-    if cia is not None:
-        return cia
-    freq = _find_note_freq_addr(image)
-    if freq is not None:
-        return freq
-    return None
+    engine = engine_entry(image)
+    return engine.source.addr if engine is not None else None
 
 
-def _base_candidates(image: SidImage) -> List[int]:
-    """Candidate data-region base addresses from the loader's table operands.
+def _base_candidates(image: SidImage) -> List[Tuple[int, int]]:
+    """Candidate ``(base, site)`` data-region bases from the loader's table operands.
 
     The section loader reads the split pointer tables with ``LDA $pp00,X``; a
     base page is any ``$pp00`` operand whose voice/section-header lo tables are
-    all present. A relocated image can present a run of consecutive candidate
-    pages; the caller disambiguates by which one actually decodes sections.
+    all present, ``site`` being the first such read. A relocated image can
+    present a run of consecutive candidate pages; the caller disambiguates by
+    which one actually decodes sections.
     """
-    pages: Set[int] = set()
-    for target in _operand_targets(image, c.LDA_ABSX):
-        if target & 0xFF == 0x00:
-            pages.add(target >> 8)
+    targets = _operand_targets(image, c.LDA_ABSX)
+    pages = {target >> 8 for target in targets if target & 0xFF == 0x00}
     probe_pages = {off >> 8 for off in c.BASE_PROBE_OFFSETS}
     return [
-        page << 8
+        (page << 8, targets[page << 8])
         for page in sorted(pages)
         if all((page + rel) in pages for rel in probe_pages)
     ]
 
 
-def _bounds_candidates(image: SidImage) -> List[tuple]:
-    """Candidate ``(sec_start, sec_last)`` pairs from the section-advance code.
+def _bounds_candidates(image: SidImage) -> List[Tuple[int, int, int]]:
+    """Candidate ``(sec_start, sec_last, site)`` from the section-advance code.
 
     ``SUB_c940`` does ``CPX sec_last`` then, on wrap, ``LDX sec_start``; the two
     globals are adjacent (``sec_last`` at ``A``, ``sec_start`` at ``A+1``), so a
@@ -122,10 +152,12 @@ def _bounds_candidates(image: SidImage) -> List[tuple]:
     """
     cpx = _operand_targets(image, c.CPX_ABS)
     ldx = _operand_targets(image, c.LDX_ABS)
-    out: List[tuple] = []
+    out: List[Tuple[int, int, int]] = []
     for last_addr in sorted(cpx):
         if last_addr + 1 in ldx:
-            out.append((image.peek(last_addr + 1), image.peek(last_addr)))
+            out.append(
+                (image.peek(last_addr + 1), image.peek(last_addr), cpx[last_addr])
+            )
     return out
 
 
@@ -169,23 +201,42 @@ def _count_sections(image: SidImage, base: int, start: int, last: int) -> int:
     return count
 
 
-def _plan(image: SidImage) -> tuple:
-    """Choose ``(base, start, last, count)`` that decodes the most valid sections.
+class _Layout(NamedTuple):
+    """One candidate layout: data base + section bounds and where each came from."""
+
+    anchor: int
+    base: int
+    start: int
+    last: int
+    count: int
+    base_site: Optional[int]
+    bounds_site: Optional[int]
+
+
+def _layouts(image: SidImage) -> List[_Layout]:
+    """Candidate layouts of ``image``, the one decoding the most sections first.
 
     Enumerates the operand-recovered base and section-bound candidates (falling
-    back to the load page and a full walk) and picks the combination yielding the
-    largest bounded run of valid sections -- robust to base ambiguity and to the
-    relocation-dependent player globals that a blind walk would run into garbage.
+    back to the load page and a full walk) and ranks the combinations by the
+    bounded run of valid sections each yields -- robust to base ambiguity and to
+    the relocation-dependent player globals that a blind walk would run into
+    garbage. Combinations decoding no section are dropped.
     """
-    bases = _base_candidates(image) or [image.load & 0xFF00]
-    bounds = _bounds_candidates(image) or [(0, c.MAX_SECTIONS - 1)]
-    best = (bases[0], bounds[0][0], bounds[0][1], -1)
-    for base in bases:
-        for start, last in bounds:
-            count = _count_sections(image, base, start, last)
-            if count > best[3]:
-                best = (base, start, last, count)
-    return best
+    anchor = find_fingerprint(image)
+    if anchor is None:
+        raise SidParseError("Soundmonitor engine fingerprint not found in image")
+    bases = _base_candidates(image) or [(image.load & 0xFF00, None)]
+    bounds = _bounds_candidates(image) or [(0, c.MAX_SECTIONS - 1, None)]
+    layouts = [
+        _Layout(anchor, base, start, last, count, base_site, bounds_site)
+        for base, base_site in bases
+        for start, last, bounds_site in bounds
+        for count in (_count_sections(image, base, start, last),)
+        if count > 0
+    ]
+    if not layouts:
+        raise SidParseError("Soundmonitor fingerprint found but no section decodes")
+    return sorted(layouts, key=lambda layout: -layout.count)
 
 
 def _decode_stream(image: SidImage, addr: int, rows: int) -> List[Row]:
@@ -288,49 +339,30 @@ def locate_note_freq(image: SidImage) -> Optional[NoteFreqTable]:
     return _base_locate_note_freq(image)
 
 
-def _find_note_freq_addr(image: SidImage) -> Optional[int]:
-    table = locate_note_freq(image)
-    return table.addr if table is not None else None
-
-
-def _run_init(image: SidImage) -> bool:
-    """Emulate the tune's init so a packed/relocating player lands in memory.
-
-    Returns ``True`` if init ran. A no-op (returns ``False``) for a bare ``.prg``
-    with no header, or if the base emulator cannot run init. ``run_init`` raises
-    the BASE :class:`SidParseError` (no init address) or
-    :class:`EmulatorUnavailable` (``jennings`` missing); both are caught here so a
-    tune that cannot be unpacked simply decodes from its directly loaded image.
-    """
-    if image.header is None:
-        return False
-    try:
-        run_init(image)
-        image.end = MEM_SIZE
-        return True
-    except (EmulatorUnavailable, BaseSidParseError):
-        return False
-
-
-def _decode_song(image: SidImage) -> Optional[Song]:
-    """A :class:`Song` decoded from ``image``, or ``None`` when no section decodes."""
-    anchor = find_fingerprint(image)
-    if anchor is None:
-        return None
-    base, start, last, count = _plan(image)
-    if count <= 0:
-        return None
-    sections = _decode_sections(image, base, start, last)
+def _decode_layout(image: SidImage, layout: _Layout) -> Song:
+    """The :class:`Song` decoded from ``image`` at ``layout``; rejects an empty one."""
+    sections = _decode_sections(image, layout.base, layout.start, layout.last)
     if not sections:
-        return None
+        raise SidParseError("no section decodes")
     return Song(
-        base=base,
-        player_anchor=anchor,
+        base=layout.base,
+        player_anchor=layout.anchor,
         header=image.header,
         sections=sections,
-        instruments=_decode_instruments(image, base, _instrument_indices(sections)),
+        instruments=_decode_instruments(
+            image, layout.base, _instrument_indices(sections)
+        ),
         note_freq=locate_note_freq(image),
     )
+
+
+# The stages are ordered: as loaded, then after init (relocated builds); the SYS
+# unpack of a bare packed PRG is driven by :func:`_sys_unpack`.
+_STRATEGIES = (
+    Strategy(STAGE_STATIC, STATIC, _decode_layout, _layouts),
+    Strategy(STAGE_AFTER_INIT, AFTER_INIT, _decode_layout, _layouts),
+)
+_SYS_UNPACK = Strategy(STAGE_SYS_UNPACK, STATIC, _decode_layout, _layouts)
 
 
 def _ram_image(mem) -> SidImage:
@@ -355,90 +387,82 @@ def _host_dir() -> pathlib.Path:
     return d
 
 
-def _unpack_mem(image: SidImage) -> Optional[bytearray]:
-    """Run a bare packed PRG's BASIC SYS stubs; the final RAM, else ``None``.
+def _sys_unpack(image: SidImage, failed: Located) -> Located:
+    """Run a bare packed PRG's BASIC SYS stubs; locate the song in the final RAM.
 
     Drives the ``SYS`` stub chain on the :class:`~pysidtracker.KernalHost`,
     re-reading the next stub after each stage returns to BASIC, until the RAM
-    decodes or no stub remains; KERNAL/BASIC ROMs load when cached.
+    decodes or no stub remains; KERNAL/BASIC ROMs load when cached. Returns the
+    accepted :class:`Located`, else ``failed`` with the reasons appended to its
+    rejection log. The whole RAM is decoded (the song data may sit below the
+    unpacked code).
     """
-    if image.header is not None:
-        return None
     load = image.load
-    prg = image.container + image.image
     try:
         current = sys_addr(image, load)
-    except KernalHostError:
-        return None
-    try:
         host = KernalHost(_host_dir(), roms=_safe_roms())
-    # No CPU core available: degrade rather than raise.
-    except Exception:  # pylint: disable=broad-except
-        return None
-    host.load_prg(prg)
+    # No SYS stub, or no CPU core available: degrade rather than raise.
+    except Exception as exc:  # pylint: disable=broad-except
+        failed.rejections.append(Rejection(STAGE_SYS_UNPACK, None, str(exc)))
+        return failed
+    host.load_prg(image.container + image.image)
     for _ in range(_MAX_SYS_STAGES):
         host.mpu.pc = current
         try:
             host.run(until=lambda h: h.mpu.pc >= 0xA000, max_steps=_STAGE_STEPS)
         except KernalHostError:
             pass
-        if _decode_song(_ram_image(host.ram)) is not None:
-            return bytearray(host.ram)
+        found = locate(_ram_image(host.ram), (_SYS_UNPACK,), init=False)
+        failed.rejections.extend(found.rejections)
+        if found.ok:
+            found.stage = STAGE_SYS_UNPACK
+            found.rejections = failed.rejections
+            found.detection = Detection(
+                PlayroutineKind.PACKED, ran_init=False, anchor=found.candidate.anchor
+            )
+            return found
         try:
             current = sys_addr(host.ram, load)
-        except KernalHostError:
-            return None
-    return None
+        except KernalHostError as exc:
+            failed.rejections.append(Rejection(STAGE_SYS_UNPACK, None, str(exc)))
+            return failed
+    return failed
 
 
-def _copy_image(image: SidImage) -> SidImage:
-    """A fresh :class:`SidImage` over a copy of ``mem`` (same header/geometry)."""
-    return SidImage(
-        bytearray(image.mem),
-        image.load,
-        image.end,
-        image.header,
-        image.image,
-        image.container,
+def _variant(located: Located) -> Variant:
+    """The :class:`Variant` of an accepted ``located``: engine, sources, stage."""
+    layout = located.candidate
+    engine = engine_entry(located.image)
+    return make_variant(
+        engine=engine,
+        base_source=(
+            Entry(SOURCE_OPERAND, detected(layout.base_site))
+            if layout.base_site is not None
+            else Entry(BASE_LOAD_PAGE, inferred("image load page"))
+        ),
+        bounds_source=(
+            Entry(SOURCE_OPERAND, detected(layout.bounds_site))
+            if layout.bounds_site is not None
+            else Entry(BOUNDS_DEFAULT, inferred("full section walk"))
+        ),
+        materialisation=Entry(located.strategy, inferred(f"stage {located.stage}")),
     )
 
 
-def _materialize(image: SidImage) -> Optional[Tuple[SidImage, str]]:
-    """A decodable-into-a-song copy of ``image`` and the stage that produced it.
+def locate_song(image: SidImage) -> Located:
+    """Locate and decode the song of ``image`` once; ``Located.layout`` is the Song.
 
-    Tries the as-loaded RAM (``"direct"``), then an emulated init for relocated
-    builds (``"relocated"``), then the KERNAL-host unpack of a bare packed PRG's
-    SYS stubs (``"packed"``); works on a copy so the caller's image is never
-    mutated. ``None`` when no stage decodes.
+    Tries the as-loaded RAM, then an emulated init (relocated builds), then the
+    KERNAL-host unpack of a bare packed PRG's SYS stubs; works on copies so the
+    caller's image is never mutated. An accepted song carries its ``variant``;
+    a failure carries the full rejection log (see :meth:`Located.require`).
     """
-    probe = _copy_image(image)
-    if _decode_song(probe) is not None:
-        return probe, "direct"
-    if _run_init(probe) and _decode_song(probe) is not None:
-        return probe, "relocated"
-    if probe.header is None:
-        ram = _unpack_mem(probe)
-        if ram is not None and _decode_song(_ram_image(ram)) is not None:
-            return _ram_image(ram), "packed"
-    return None
-
-
-def _materialized(image: SidImage) -> Optional[SidImage]:
-    """The :func:`_materialize` image (init/unpacked), else ``None``."""
-    result = _materialize(image)
-    return result[0] if result is not None else None
-
-
-def materialization(data: bytes) -> Tuple[SidImage, str]:
-    """The materialised image of ``data`` and its stage (direct/relocated/packed).
-
-    Raises :class:`SidParseError` when the image never decodes into a song.
-    """
-    result = _materialize(SidImage.from_bytes(data))
-    if result is None:
-        parse(data)  # raises the specific SidParseError
-        raise SidParseError("Soundmonitor image did not materialise into a song")
-    return result
+    located = locate(image, _STRATEGIES)
+    if not located.ok and image.header is None:
+        located = _sys_unpack(image, located)
+    if located.ok:
+        located.layout.variant = _variant(located)
+    return located
 
 
 def parse(data: bytes) -> Song:
@@ -446,18 +470,10 @@ def parse(data: bytes) -> Song:
 
     Decodes the as-loaded image, an emulated init, or the KERNAL-host unpack of a
     bare packed PRG's SYS stubs. Never returns an empty :class:`Song`: an image
-    that cannot materialise into a song raises :class:`SidParseError`.
+    that cannot materialise into a song raises :class:`SidParseError` carrying
+    every rejected strategy and why.
     """
-    image = SidImage.from_bytes(data)
-    materialized = _materialized(image)
-    song = _decode_song(materialized) if materialized is not None else None
-    if song is None:
-        if find_fingerprint(image) is not None:
-            raise SidParseError(
-                "Soundmonitor fingerprint found but no section decodes in the image"
-            )
-        raise SidParseError("Soundmonitor engine fingerprint not found in image")
-    return song
+    return locate_song(SidImage.from_bytes(data)).require(SidParseError)
 
 
 def read(src) -> Song:
