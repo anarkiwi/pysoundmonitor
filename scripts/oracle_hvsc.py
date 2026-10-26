@@ -8,22 +8,29 @@ import numpy as np
 from pysidtracker import SidImage
 from pysidtracker.cadence import cadence_info
 
-from pysoundmonitor import SoundMonitorPlayer
-from pysoundmonitor.reader import find_cia_fingerprint, find_fingerprint
+from pysoundmonitor import SidParseError, SoundMonitorPlayer, parse
+from pysoundmonitor.reader import engine_entry
 
 PLAYER = "^Soundmonitor$"
 
 
-def _engine(image):
-    """How the reader recognises the replay: its CIA section loader or note tables."""
-    if find_fingerprint(image) is None:
-        return None
-    return "cia_loader" if find_cia_fingerprint(image) is not None else "note_freq"
+def _build(data):
+    """The build the reader recognises: its facets, else the raw image's engine.
+
+    A tune that decodes reports every variant facet with its source; one that
+    only carries the engine fingerprint (an unexpanded packed stream) reports the
+    engine alone, and a non-Soundmonitor image reports none.
+    """
+    try:
+        return parse(data).variant.as_info()
+    except SidParseError:
+        engine = engine_entry(SidImage.from_bytes(data))
+        return {"engine": engine.value if engine is not None else None}
 
 
 def render(data, song, nframes):
     """Render 1-based ``song`` of a Soundmonitor ``.sid`` and the build it carries."""
     grid = SoundMonitorPlayer(data, song - 1).render_grid(nframes)
-    info = {"engine": _engine(SidImage.from_bytes(data))}
+    info = _build(data)
     info.update(cadence_info(data, song))
     return np.asarray(grid, np.int16), info
