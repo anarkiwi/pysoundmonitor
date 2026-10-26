@@ -291,7 +291,7 @@ def _decode_sections(
     """Decode the song's sections over ``start..last`` (inclusive, wrapping).
 
     Stops at the first invalid section. ``base`` and the ``(start, last)`` bounds
-    come from :func:`_plan`, which recovers them from the player's own operands
+    come from :func:`_layouts`, which recovers them from the player's own operands
     (so a bounded, correct set is decoded rather than walking a relocation-
     dependent table into garbage and hitting the 256 cap).
     """
