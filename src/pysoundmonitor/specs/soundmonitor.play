@@ -7,9 +7,10 @@ spec soundmonitor;
 
 layout {
   entry, init_flag, last_sec, first_sec, rec, misc, fill, fill_hi, ptrs, base,
-  freq_hi, freq_lo, hdr_zp, hdr_fixed, stash: addr;
+  freq_hi, freq_lo, hdr_zp, hdr_fixed, stash, op_cur_hi, vol_or, vol_hook,
+  stop_vol: addr;
   fill_n, rec_n: byte;
-  cia, swap: flag;
+  cia, swap, ramp_store, vol_imm: flag;
 }
 
 const REC = 0xCBFA;
@@ -47,6 +48,12 @@ cell ibase: u8[3] @ 0x02CF;
 cell xpose: u8[3] @ 0x02D2;
 cell sptr: ptr[4] @ L.ptrs;
 cell stash: u8[8] @ L.stash;
+
+// Operands and opcodes the rips patch: the glide's high byte source, the volume
+// the stop leaves, and the volume routine's OR source and store.
+cell op_cur_hi: u16 @ L.op_cur_hi operand;
+cell stop_vol: u8 @ L.stop_vol operand;
+cell vol_or: u8 @ L.vol_or operand;
 cell hdr_tab: ptr[1] @ L.hdr_zp;
 cell sid: u8[32] @ SID out;
 
@@ -169,7 +176,7 @@ proc glide_to_target(v: u8) {
   } else {
     let b0 = borrow(lo, tlo);
     t0 := lo - tlo;
-    t1 := hi - thi - u8(b0);
+    t1 := mem[op_cur_hi + u16(7 * v)] - thi - u8(b0);
     if t1 < gl_hi || (t1 == gl_hi && t0 < gl_lo) {
       glide_set(v);
     } else {
@@ -378,10 +385,18 @@ proc arp_run(v: u8) {
 }
 
 // ---- the volume ----------------------------------------------------------------------
+proc volume_store() {
+  if L.vol_hook != 0 {
+    native L.vol_hook(a = vol_mir) resumes L.vol_hook + 3;
+  } else {
+    sid[0x18] := vol_mir;
+  }
+}
+
 proc volume() {
   if ramp_len == 0 {
-    vol_mir := (vol_mir & 0xF0) | base_vol;
-    sid[0x18] := vol_mir;
+    vol_mir := (vol_mir & 0xF0) | ite(L.vol_imm, vol_or, base_vol);
+    volume_store();
     return;
   }
   ramp_ctr -= 1;
@@ -395,7 +410,9 @@ proc volume() {
   ramp_vol := t0;
   ramp_ctr := ramp_len;
   vol_mir := (vol_mir & 0xF0) | t0;
-  sid[0x18] := vol_mir;
+  if L.ramp_store {
+    sid[0x18] := vol_mir;
+  }
 }
 
 // ---- sections ----------------------------------------------------------------------------
@@ -533,7 +550,7 @@ machine entry {
       sid[0x12] := 0;
       sid[0x17] := 0;
       playing := 0;
-      sid[0x18] := 0x0F;
+      sid[0x18] := stop_vol;
       tempo_ctr := 7;
     }
   }

@@ -73,6 +73,7 @@ def build_payload(
     with_operands=True,
     bounds=None,
     engine=False,
+    patched=False,
 ):
     """Build the raw C64 image (load..end) plus its ``(load, init, play)``."""
     mem = bytearray(0x10000)
@@ -143,14 +144,15 @@ def build_payload(
         end = max(end, freq + 2 * c.NOTE_FREQ_LEN)
     init, play = player, player + 0x20
     if engine:
-        end, init, play = _engine(mem, base, len(sections), end)
+        end, init, play = _engine(mem, base, len(sections), end, patched)
     return bytes(mem[base:end]), base, init, play, anchor
 
 
+ENGINE_BASE = 0x1000
 ENGINE_STATE = 0x3000
 
 
-def _engine(mem, base, count, end):
+def _engine(mem, base, count, end, patched=False):
     """Write the operand shapes the playspec binds to, and a play that calls the entry.
 
     The entry is trapped and run as the spec, so these bytes are never executed
@@ -176,11 +178,28 @@ def _engine(mem, base, count, end):
         0x80: bytes((0xAD, misc & 0xFF, misc >> 8, 0x29, 0x10, 0xF0, 0x00, 0xAD))
         + bytes((0x00, 0x00)),
         0xA0: bytes((0xAD, 0x04, 0xDC, 0xC8, 0xB1, 0xAB, 0xC8, 0xC9, 0x06)),
+        0xB0: bytes((0x38, 0xBD, 0x00, 0x00, 0xFD, 0x00, 0x00, 0x8D, 0xC7, 0x02))
+        + bytes((0xBD, 0xF5, 0xCD, 0xFD, 0x00, 0x00, 0x8D, 0xC8, 0x02, 0x4C)),
+        0xD0: bytes((0xA9, 0x0F, 0x8D, 0x18, 0xD4, 0xA9, 0x07, 0x8D, 0x00, 0x00)),
+        0xE0: bytes((0x29, 0xF0, 0x0D, 0xC7, 0x02, 0x8D, 0x00, 0x00, 0x8D, 0x18))
+        + bytes((0xD4, 0x60)),
+        0xF0: bytes((0x60, 0xAD, 0x00, 0x00, 0x29, 0xF0, 0x0D, 0xEF, 0xCD, 0x8D))
+        + bytes((0x00, 0x00, 0x8D, 0x18, 0xD4, 0x60)),
     }
+    if patched:
+        hook, mirror = eng + 0x110, eng + 0x120
+        glide = bytearray(code[0xB0])
+        glide[11] = 0xF4
+        code[0xB0] = bytes(glide)
+        code[0xD0] = bytes((0xA9, 0x00)) + code[0xD0][2:]
+        code[0xE0] = code[0xE0][:8] + bytes((0xEA, 0xEA, 0xEA, 0x60))
+        code[0xF0] = bytes((0x60, 0xAD, 0x00, 0x00, 0x29, 0xF0, 0x09, 0x09, 0xEA, 0x8D))
+        code[0xF0] += bytes((0x00, 0x00, 0x20, hook & 0xFF, hook >> 8, 0x60))
+        code[0x110] = bytes((0x8D, 0x18, 0xD4, 0x8D, mirror & 0xFF, mirror >> 8, 0x60))
     for offset, blob in code.items():
         mem[eng + offset : eng + offset + len(blob)] = blob
     mem[last], mem[first] = count - 1, 0
-    return max(end, eng + 0xB0), eng + 0x10, eng
+    return max(end, eng + 0x130), eng + 0x10, eng
 
 
 def build_sid(sections=None, instruments=None, **kwargs):
@@ -302,7 +321,11 @@ def build_no_fingerprint():
 
 
 def build_engine_sid(sections=None, instruments=None, **kwargs):
-    """A PSID the playspec plays: the synthetic song and the engine's operand shapes."""
+    """A PSID the playspec plays: the synthetic song and the engine's operand shapes.
+
+    ``patched=True`` shapes them as a rip that patched the volume routine does: an
+    immediate OR, a hook in place of the ``$D418`` store and silence of volume 0.
+    """
     if sections is None:
         sections = [make_section()]
     if instruments is None:

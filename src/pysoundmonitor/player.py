@@ -7,12 +7,13 @@ relocated data); each play call is then the playspec of
 the build's own operands name. The tune's play routine (banking, the CIA-timed
 cohort's wrapper) runs on the CPU and each call into the modelled entry runs as
 the spec. A tune with play address 0 drives the replay from the interrupts its
-init installs, so it plays on pysidtracker's :class:`~pysidtracker.irqhost.InterruptPlayer`,
-framed at its play source's raises as the oracle is. The per-frame grid is
-validated byte-exact against the ``sidtrace`` oracle (see the oracle test).
-Reading ``.sid``/``.prg`` containers is routed through :class:`~pysidtracker.SidImage`;
-:class:`SoundMonitorSidParser` gives the same image the family ``parse``/``detect``
-surface.
+init installs: the :class:`~pysidtracker.playspec.SpecPlayer` hosts them on
+pysidtracker's interrupt host, runs each handler's call into the modelled entry
+as the spec, and frames the grid at the play source's raises as the oracle is.
+The per-frame grid is validated byte-exact against the ``sidtrace`` oracle (see
+the oracle test). Reading ``.sid``/``.prg`` containers is routed through
+:class:`~pysidtracker.SidImage`; :class:`SoundMonitorSidParser` gives the same
+image the family ``parse``/``detect`` surface.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from pysidtracker import registers as reg
 from pysidtracker.audio import frames_to_seconds, render_player_wav
 from pysidtracker.cadence import Cadence, playroutine_cadence
 from pysidtracker.errors import reraise_as
-from pysidtracker.irqhost import InterruptPlayer
 from pysidtracker.playspec import SpecPlayer
 from pysidtracker.reglog import RegWrite, register_writes_from_player
 
@@ -42,7 +42,8 @@ class SoundMonitorPlayer(SpecPlayer):
     :meth:`render_grid` yields the 25-register, forward-filled per-frame grid;
     :meth:`register_writes` and :meth:`render_wav` reuse the shared reglog/audio
     surfaces off the same replay. With ``validate`` the streams the spec opens
-    are parsed under the song grammar (see ``validator``).
+    are parsed under the song grammar (see ``validator``); ``spec`` replaces the
+    playspec, e.g. with its :func:`~pysidtracker.playspec.unnative.unnative` form.
     """
 
     error_class = SidParseError
@@ -55,36 +56,38 @@ class SoundMonitorPlayer(SpecPlayer):
         max_cycles: int = 8_000_000,
         validate: bool = False,
         bind=playspec.binding,
+        spec=playspec.SPEC,
     ):
         image = data if isinstance(data, SidImage) else SidImage.from_bytes(bytes(data))
         header = image.header
         if header is None:
             raise self.error_class("cannot play a bare .prg: image has no SID header")
         init = header.init_address or header.real_load_address
-        self._sid = image.container + image.image
+        self._tune = image.container + image.image
         self._subtune = subtune
         self._cadence: Optional[Cadence] = None
-        self._hosted = None if header.play_address else InterruptPlayer(image, subtune)
-        super().__init__(
-            playspec.SPEC,
-            image.image,
-            image.load,
-            init,
-            header.play_address or init,
-            subtune,
-            bind=bind,
-            entries=playspec.entries,
-            validate=validate,
-            max_cycles=max_cycles,
-            sid_model=reg.sid_model_for_flags(header.flags),
-            ntsc=header.is_ntsc,
-        )
+        with reraise_as(self.error_class):
+            super().__init__(
+                spec,
+                image.image,
+                image.load,
+                init,
+                header.play_address,
+                subtune,
+                bind=bind,
+                entries=playspec.entries,
+                validate=validate,
+                sid=self._tune,
+                max_cycles=max_cycles,
+                sid_model=reg.sid_model_for_flags(header.flags),
+                ntsc=header.is_ntsc,
+            )
 
     @property
     def cadence(self) -> Cadence:
         """The tune's play-routine :class:`~pysidtracker.cadence.Cadence` (cached)."""
         if self._cadence is None:
-            self._cadence = playroutine_cadence(self._sid, subtune=self._subtune)
+            self._cadence = playroutine_cadence(self._tune, subtune=self._subtune)
         return self._cadence
 
     @property
@@ -92,33 +95,15 @@ class SoundMonitorPlayer(SpecPlayer):
         """CPU cycles between play calls (the period a WAV render spaces frames by)."""
         return self.cadence.cycles_per_call
 
-    def _init(self, subtune: int) -> None:
-        if self._hosted is None:
-            with reraise_as(self.error_class):
-                super()._init(subtune)
-
-    def _frame(self) -> None:
-        if self._hosted is None:
-            super()._frame()
-        else:
-            self._hosted.play_frame()
-
-    def snapshot(self) -> List[int]:
-        if self._hosted is None:
-            return super().snapshot()
-        return self._hosted.snapshot()
-
     def render_grid(self, nframes: int) -> List[List[int]]:
         """``nframes`` rows; a hosted tune's are framed at its play source's raises.
 
         A hosted tune whose CPU never entered an interrupt vector (an ``*_entry``
         row) is not playing: it raises ``error_class``.
         """
-        if self._hosted is None:
-            return super().render_grid(nframes)
         with reraise_as(self.error_class):
-            grid = self._hosted.render_grid(nframes)
-        if not any(
+            grid = super().render_grid(nframes)
+        if self._hosted is not None and not any(
             r[1] is None and r[3].endswith("_entry") for r in self._hosted.host.raw
         ):
             raise self.error_class("no interrupt was seen to play the tune")
