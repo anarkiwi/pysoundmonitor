@@ -1,0 +1,32 @@
+// Soundmonitor song streams, one latin-1 character per byte.
+//
+// section_header   one section's 14-byte header (patlen is never zero)
+// pattern          a voice's [note][ctrl] rows; the caller windows it to patlen rows
+// instrument       one 24-byte record: 16 record bytes, then an 8-byte tail whose
+//                  first byte is $FF when the record has no filter tail
+// sound_bank       the SOUND first-last save body: consecutive instrument records
+// track_tables     the 14 table pages at the data base
+// steps_only       the STEPS ONLY save data: track_tables, then instrument records
+
+%import bytes (BYTE)
+
+PATLEN: /[\x01-\xff]/
+TAIL_MARK: /[\x00-\xfe]/
+NO_TAIL: /\xff/
+PAGE: /[\x00-\xff]{256}/
+
+section_header: BYTE BYTE BYTE PATLEN BYTE BYTE BYTE~8
+
+pattern: row+
+row: BYTE BYTE
+
+record: BYTE~16 (TAIL_MARK | NO_TAIL) BYTE~7
+instrument: record
+sound_bank: record+
+
+tables: voice_pages voice_pages voice_pages header_pages
+voice_pages: PAGE PAGE PAGE PAGE
+header_pages: PAGE PAGE
+track_tables: tables
+
+steps_only: tables record+
