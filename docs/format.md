@@ -198,9 +198,12 @@ frame (`pysidtracker.make_oracle_fixtures`). It is `oracle`-marked and runs in a
 dedicated CI job (`pytest -m oracle`) with Docker. The same job runs
 `tests/test_playspec_oracle.py`: the spec's 64 KiB (outside the stack page and
 the SID window) equals the tune's own 6502 play routine's after every call of
-the whole song, `tv.validate` proves `reader[0].parse` equal to the 6502 row
-reader of `Only_3` for all initial memory, and bounded checking holds the
-spec's tempo invariant from the tune's post-init memory. HVSC `.sid` files are
+the whole song, `tv.validate` proves the volume ramp, the filter sweep and start,
+the filter register setup and each voice's glide equal their 6502 subroutines in
+`Only_3` for all initial memory, and bounded checking holds the spec's tempo
+invariant from the tune's post-init memory. The row reader (`reader[0].parse`
+against the 6502 routine at `$C4EF`) did not finish within 50 minutes, so it is
+not proven. HVSC `.sid` files are
 copyright works, fetched to a cache and never committed. See the base
 [oracle-testing guide](https://github.com/anarkiwi/pysidtracker/blob/main/docs/oracle-testing.md).
 

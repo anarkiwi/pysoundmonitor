@@ -33,7 +33,6 @@ ZP_PTRS = 0xA5
 HEADER_PTR = 6
 LATCH = CodePattern("{op} 04 DC C8 B1 ?? C8 C9 06")
 STA_ABS = 0x8D
-READER = CodePattern("AD C6 02 29 01 F0 01 60 AD C0 02 0A A8 B1")
 
 
 def _image(view) -> SidImage:
@@ -84,8 +83,3 @@ def binding(view, entry):
         "freq_lo": table.addr + c.NOTE_FREQ_LEN,
         "cia": _one(image, LATCH)["op"] == STA_ABS,
     }
-
-
-def row_reader(view) -> int:
-    """The address of voice 0's row reader."""
-    return next(iter(find_code_all(_image(view), READER))).addr
