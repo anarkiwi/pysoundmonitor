@@ -156,3 +156,39 @@ def test_locate_failure_carries_rejection_log():
     assert "fingerprint not found" in located.describe()
     with pytest.raises(SidParseError, match="no layout found"):
         located.require(SidParseError)
+
+
+def test_section_bounds_come_from_the_player_operands():
+    sections = [helpers.make_section(latch=0x1000 * (i + 1)) for i in range(4)]
+    data, _ = helpers.build_sid(sections=sections, bounds=(1, 2))
+    song = parse(data)
+    assert [s.index for s in song.sections] == [1, 2]
+    assert song.variant["bounds_source"] == "operand"
+
+
+def test_section_bounds_wrap_modulo_256():
+    sections = [helpers.make_section(latch=0x1000 * (i + 1)) for i in range(3)]
+    data, _ = helpers.build_sid(sections=sections, bounds=(0, 2))
+    assert [s.index for s in parse(data).sections] == [0, 1, 2]
+
+
+def test_only_trigger_rows_select_instruments():
+    data, _ = helpers.build_sid()
+    song = parse(data)
+    assert {i.index for i in song.instruments} == {0, 1}
+
+
+def test_base_with_the_most_decodable_sections_wins():
+    small = helpers.build_payload([helpers.make_section()], {}, base=0x1000)
+    large_sections = [helpers.make_section(), helpers.make_section(latch=0x2000)]
+    large = helpers.build_payload(large_sections, {}, base=0x4000)
+    mem = bytearray(0x10000)
+    for payload, load, *_ in (small, large):
+        mem[load : load + len(payload)] = payload
+    end = 0x4000 + len(large[0])
+    data = helpers.write_psid(
+        load=0x1000, init=large[2], play=large[3], image=bytes(mem[0x1000:end])
+    )
+    song = parse(data)
+    assert song.base == 0x4000
+    assert len(song.sections) == 2

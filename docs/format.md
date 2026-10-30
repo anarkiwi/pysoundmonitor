@@ -44,27 +44,44 @@ are not decodable in the directly loaded image (a relocating build).
 
 The data region is a run of page-aligned split (lo/hi) pointer and transpose
 tables indexed by the section number. Its base page is recovered from the
-loader's own `LDA $pp00,X` table-indexing operands (the smallest page whose
-voice + section-header table geometry is all present), falling back to the image
-load address — no baked addresses.
+loader's own `LDA $pp00,X` table-indexing operands (every page whose four
+table pages (voice 0/1/2 stream pointers, section-header pointers) are all
+`LDA $pp00,X` operands is a candidate; the candidate that decodes the most
+sections wins, the smaller page on a tie, and one that decodes no section is
+dropped). With no candidate the base falls back to the image's load page — no
+baked addresses.
 
 ## Data model
 
-Layout, in byte offsets from the data base:
+Layout, in byte offsets from the data base. Every table is one 256-byte page
+indexed by the section number; the grammar's `track_tables` rule is the 14
+pages below, of which the reader uses all but the spare ones:
 
-| offset | table |
+| offset | page |
 |---|---|
-| `+$000/$100` | voice-0 stream pointer lo/hi (per section) |
-| `+$200/$300` | voice-0 transpose |
-| `+$400/$500`,`+$600/$700` | voice-1 stream pointer / transpose |
-| `+$800/$900`,`+$A00/$B00` | voice-2 stream pointer / transpose |
-| `+$C00/$D00` | section-header pointer lo/hi |
+| `+$000` | voice 0 stream pointer lo |
+| `+$100` | voice 0 stream pointer hi |
+| `+$200` | voice 0 transpose |
+| `+$300` | voice 0 spare |
+| `+$400` | voice 1 stream pointer lo |
+| `+$500` | voice 1 stream pointer hi |
+| `+$600` | voice 1 transpose |
+| `+$700` | voice 1 spare |
+| `+$800` | voice 2 stream pointer lo |
+| `+$900` | voice 2 stream pointer hi |
+| `+$A00` | voice 2 transpose |
+| `+$B00` | voice 2 spare |
+| `+$C00` | section header pointer lo |
+| `+$D00` | section header pointer hi |
 | `+$E00` | instrument records (`index * 24`) |
 
 **Section** = one song-step. Its header holds `[0..1]` CIA latch (play cadence =
 `latch + 1` cycles/call), `[2]` tempo divider, `[3]` pattern length, `[4]`
 volume-ramp config, `[5]` base-volume nibble, `[6..13]` an 8-entry arp-note
-table. Each section has three per-voice pattern streams.
+table. Each section has three per-voice pattern streams. The pattern length is a
+single byte and `0` is not a section: the grammar rejects the header, and the
+reader stops the section run there, as it does at a null or out-of-image header
+or stream pointer.
 
 The played section range is `sec_start .. sec_last` (inclusive, wrapping mod
 256). Those bounds are player globals, so rather than walk the pointer table into
@@ -72,7 +89,7 @@ the `MAX_SECTIONS` cap the reader recovers them from the section-advance code's
 own `CPX sec_last` / `LDX sec_start` operands (two adjacent globals), and picks
 the base + bounds combination that decodes the largest run of valid sections.
 
-**Pattern stream** = a flat array of 2-byte `[note][ctrl]` rows. `note == $00` is
+**Pattern stream** = a flat array of `pattern length` 2-byte `[note][ctrl]` rows. `note == $00` is
 a rest, `note == $80` a tie/hold; otherwise `note` bit7 is the new-note key-on
 trigger and bits0-6 a freq-table index. `ctrl` bits: 0-3 instrument index, bit4
 portamento, bit5 absolute (skip section transpose), bit6 arp/glide enable, bit7
@@ -81,15 +98,28 @@ clear adds the per-section instrument base.
 **Instrument record** = 16 bytes: `0` CTRL+gate, `1` AD, `2` SR, `3` glide-rate
 lo, `4` PW seed, `5` PW up-dwell, `6` PW down-dwell, `7` PW step, `8` sustain
 CTRL, `9` mode, `10` glide-enable, `11` glide-rate hi, `12` vibrato depth, `13`
-vibrato period/dir, `14` vibrato delay, `15` detune. Byte `16` is a marker: if
-not `$FF`, an 8-byte global-filter tail (`vol/mode, res/filt, cutoff-hi,
-up-dwell, down-dwell, step, bound, flags`) follows (24-byte record stride).
+vibrato period/dir, `14` vibrato delay, `15` detune. Bytes `16..23` are the
+8-byte global-filter tail (`vol/mode, res/filt, cutoff-hi, up-dwell, down-dwell,
+step, bound, flags`); the record has no tail when byte `16`, the tail's first
+byte, is `$FF` (24-byte record stride either way). The reader decodes only the
+instruments that a trigger row selects (`ctrl` bits 0-3); an unreferenced record
+is not in `song.instruments`.
 
 **Note-frequency tables** = two parallel per-semitone tables (freq hi then lo,
 95 entries each, abutting). The player reads them with paired `LDA NoteFreqHi,X`
 / `LDA NoteFreqLo,X`, so they are located relocation-tolerantly from those two
 absolute-indexed operands (their difference is the table length) validated by the
 hi table's octave-ramp signature.
+
+## Song grammar
+
+`src/pysoundmonitor/soundmonitor.lark` is a `pysidtracker` `ByteGrammar` of the
+streams above; the reader parses every table, header, pattern and instrument
+record through it, so a malformed stream is a `SidParseError`. Its start rules:
+`section_header`, `pattern`, `instrument`, `track_tables`, and, for the editor's
+saves, `sound_bank` (SOUND first-last: consecutive 24-byte records) and
+`steps_only` (STEPS ONLY: the track tables then the records). The format is
+registered with it, so `pysidtracker grammar TUNE` lists a tune's streams.
 
 ## Player and playback notes
 
@@ -119,7 +149,7 @@ cycles/call, and `song.cia_latch`).
 
 ### Tunes that install their own interrupt
 
-A header play address of 0 (every Soundmonitor RSID) means init installs the
+A header play address of 0 (an RSID such as `Sidewalk`) means init installs the
 play handler itself. `TunePlayer` then plays the tune under
 [`pysidtracker.irqhost.InterruptPlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md),
 which boots and runs it as the sidtrace oracle's sidplayfp does: the PSID driver
@@ -133,8 +163,9 @@ never run raises `SidParseError` when rendered.
 
 ### Oracle testing
 
-`tests/test_oracle_hvsc.py` renders each covered HVSC tune with
-`SoundMonitorPlayer` and asserts the per-frame SID register grid matches the
+`tests/test_oracle_hvsc.py` renders each covered HVSC tune over its whole song
+length with `SoundMonitorPlayer` and asserts the per-frame SID register grid
+matches the
 [`sidtrace`](https://github.com/anarkiwi/sidtrace) `sidplayfp` oracle frame for
 frame (`pysidtracker.make_oracle_fixtures`). It is `oracle`-marked and runs in a
 dedicated CI job (`pytest -m oracle`) with Docker; HVSC `.sid` files are
@@ -157,7 +188,7 @@ timer), the last four from `pysidtracker.cadence.cadence_info`. Tunes the reader
 `pysidtracker.SidParseError`, so the survey counts them as `not_decompiled`.
 
 ```bash
-pip install "pysidtracker[survey]>=0.28.0"
+pip install "pysidtracker[survey]>=0.43.0"
 python -m pysidtracker.survey find $HVSC --player '^Soundmonitor$' --out .hvsc-survey/tunes.csv
 PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
     --work .hvsc-survey --render oracle_hvsc:render --jobs 32
@@ -166,7 +197,7 @@ python -m pysidtracker.survey triage .hvsc-survey
 PYTHONPATH=scripts python -m pysidtracker.survey diff $HVSC .hvsc-survey/tunes.csv <md5>_<song> \
     --work .hvsc-survey --render oracle_hvsc:render
 PYTHONPATH=scripts python -m pysidtracker.survey file oracle_hvsc:render tune.sid \
-    --song all --frames 250 --work .tunecache/csv
+    --song all --work .tunecache/csv
 ```
 
 `file` gives one `.sid`'s subtunes (`--song all`, or `1,4-6`) the same
