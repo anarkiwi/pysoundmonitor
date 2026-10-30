@@ -42,8 +42,8 @@ class SoundMonitorPlayer(SpecPlayer):
     :meth:`render_grid` yields the 25-register, forward-filled per-frame grid;
     :meth:`register_writes` and :meth:`render_wav` reuse the shared reglog/audio
     surfaces off the same replay. With ``validate`` the streams the spec opens
-    are parsed under the song grammar (see ``validator``); ``spec`` replaces the
-    playspec, e.g. with its :func:`~pysidtracker.playspec.unnative.unnative` form.
+    are parsed under the song grammar (see ``validator``); ``bind`` returns the
+    spec variant and layout of the instance, and ``spec`` is the base it is given.
     """
 
     error_class = SidParseError
@@ -55,7 +55,7 @@ class SoundMonitorPlayer(SpecPlayer):
         *,
         max_cycles: int = 8_000_000,
         validate: bool = False,
-        bind=playspec.binding,
+        bind=playspec.bind,
         spec=playspec.SPEC,
     ):
         image = data if isinstance(data, SidImage) else SidImage.from_bytes(bytes(data))

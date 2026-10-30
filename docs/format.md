@@ -201,9 +201,11 @@ accumulator, and the spec carries on after it. `Future_Spy` and `Lavender` are
 such rips; both play byte-exact to their own 6502. A build that lacks one of the
 operand shapes the binder reads, as a rip that patched elsewhere does, raises
 `SidParseError` naming the missing shape; a patch that leaves every shape in
-place is not detected. `pysidtracker playspec
-unnative` replaces a spec's `native` statements with the spec statements that do
-the same.
+place is not detected. A hooked volume routine runs
+`specs/soundmonitor_hook.play`, the variant of the base spec that overrides
+`volume_store` with the `native` call; `playspec.bind` chooses it per build. `pysidtracker playspec
+unnative` replaces the variant's `native` statement with the spec statements that
+do the same.
 
 ### Oracle testing
 
@@ -239,7 +241,7 @@ timer), the last four from `pysidtracker.cadence.cadence_info`. Tunes the reader
 `pysidtracker.SidParseError`, so the survey counts them as `not_decompiled`.
 
 ```bash
-pip install "pysidtracker[survey]>=0.43.0"
+pip install "pysidtracker[survey]>=0.48.1"
 python -m pysidtracker.survey find $HVSC --player '^Soundmonitor$' --out .hvsc-survey/tunes.csv
 PYTHONPATH=scripts python -m pysidtracker.survey run $HVSC .hvsc-survey/tunes.csv \
     --work .hvsc-survey --render oracle_hvsc:render --jobs 32
