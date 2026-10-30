@@ -177,18 +177,30 @@ per-section cadence is also exposed on the model (`latch + 1` cycles/call, and
 ### Tunes that install their own interrupt
 
 A header play address of 0 (an RSID such as `Sidewalk`) means init installs the
-play handler itself. `SoundMonitorPlayer` then plays the tune under
-[`pysidtracker.irqhost.InterruptPlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md),
-which boots and runs it as the sidtrace oracle's sidplayfp does: the PSID driver
-from power-on, every interrupt the tune programs (VIC raster, CIA #1 Timer A/B
-IRQs, CIA #2 Timer A/B NMIs) and the cycles the VIC steals for badlines and
-sprites, cycle for cycle. Its trace equals the oracle's, so an NMI sample player
-beside the music IRQ, or a main loop writing `$D418`, renders byte-exact.
-`render_grid` frames the rows at the play source's raises exactly as the oracle
-grid is framed; `play_frame` advances one such frame. A tune whose interrupts
-never run raises `SidParseError` when rendered. `SpecPlayer` does not yet trap
-entries under the interrupt host, so these tunes run the tune's own 6502, not the
-spec.
+play handler itself. `SoundMonitorPlayer` then plays the tune on
+[`pysidtracker.irqhost.InterruptPlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md)
+through its `SpecPlayer`, which boots and runs it as the sidtrace oracle's
+sidplayfp does: the PSID driver from power-on, every interrupt the tune programs
+(VIC raster, CIA #1 Timer A/B IRQs, CIA #2 Timer A/B NMIs) and the cycles the VIC
+steals for badlines and sprites, cycle for cycle. A call a handler makes into the
+modelled entry runs as the spec, as an instant at the cycle it is reached, so an
+NMI sample player beside the music IRQ, or a main loop writing `$D418`, renders
+byte-exact. `render_grid` frames the rows at the play source's raises exactly as
+the oracle grid is framed; `play_frame` advances one such frame. A tune whose
+interrupts never run raises `SidParseError` when rendered.
+
+### Patched tunes
+
+Some rips patch the playroutine. The spec follows the patches it knows through
+the build's own operands, not a second spec: the glide's source of the current
+high byte, the volume a stop leaves, whether the ramp stores `$D418`, the volume
+routine's OR source (a constant instead of the song's base volume) and a `JSR`
+hook in place of the `$D418` store. The hook is a `native` statement of the spec:
+the tune's own 6502 runs from the `JSR`, with the mirrored volume in the
+accumulator, and the spec carries on after it. `Future_Spy` and `Lavender` are
+such rips; both play byte-exact to their own 6502. `pysidtracker playspec
+unnative` replaces a spec's `native` statements with the spec statements that do
+the same.
 
 ### Oracle testing
 

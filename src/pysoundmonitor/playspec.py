@@ -32,7 +32,18 @@ FIXED = CodePattern("A9 {lo} 85 AB A9 {hi} 85 AC BD ?? ?? 85 {zp}")
 ZP_PTRS = 0xA5
 HEADER_PTR = 6
 LATCH = CodePattern("{op} 04 DC C8 B1 ?? C8 C9 06")
+GLIDE = CodePattern("38 BD ?? ?? FD ?? ?? 8D C7 02 BD {src:w} FD ?? ?? 8D C8 02 4C")
+SILENCE = CodePattern("A9 {vol} 8D 18 D4 A9 07 8D")
+RAMP = CodePattern("29 F0 0D C7 02 8D ?? ?? {store} ?? ?? 60")
+VOLUME = CodePattern(
+    "60 AD ?? ?? 29 F0 {opcode} {operand} ?? 8D ?? ?? {finish} ?? ?? 60"
+)
 STA_ABS = 0x8D
+ORA_IMM = 0x09
+JSR_ABS = 0x20
+GLIDE_OPERAND = 11
+VOLUME_OPERAND = 7
+VOLUME_FINISH = 12
 
 
 def _image(view) -> SidImage:
@@ -64,8 +75,19 @@ def binding(view, entry):
     swap = next(iter(find_code_all(image, SWAP)), None)
     ptrs = swap.captures["zp"] if swap else ZP_PTRS
     fixed = next(iter(find_code_all(image, FIXED)), None)
+    glide = next(iter(find_code_all(image, GLIDE)))
+    silence = next(iter(find_code_all(image, SILENCE)))
+    ramp = next(iter(find_code_all(image, RAMP)))
+    volume = next(iter(find_code_all(image, VOLUME)))
+    hooked = volume.captures["finish"] == JSR_ABS
     return {
         "entry": entry,
+        "op_cur_hi": glide.addr + GLIDE_OPERAND,
+        "stop_vol": silence.addr + 1,
+        "ramp_store": ramp.captures["store"] == STA_ABS,
+        "vol_or": volume.addr + VOLUME_OPERAND,
+        "vol_imm": volume.captures["opcode"] == ORA_IMM,
+        "vol_hook": volume.addr + VOLUME_FINISH if hooked else 0,
         "init_flag": play.captures["flag"],
         "last_sec": sections["last"],
         "first_sec": sections["first"],

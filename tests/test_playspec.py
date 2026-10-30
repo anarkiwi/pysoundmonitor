@@ -4,7 +4,9 @@ import pytest
 
 from pysidtracker import SidImage
 
+from pysidtracker.irqhost import InterruptPlayer
 from pysidtracker.oracle import EmuPlayer
+from pysidtracker.playspec.unnative import equivalent, unnative
 from pysidtracker.testing import whole_song
 
 import helpers
@@ -191,3 +193,56 @@ def test_equal_songs_have_equal_canonical_text_wherever_they_are_built():
     text = fmt.canonical_text(fmt.parser.parse(first))
     assert text == fmt.canonical_text(fmt.parser.parse(again))
     assert text != fmt.canonical_text(fmt.parser.parse(changed))
+
+
+def test_a_patched_volume_routine_runs_its_own_hook():
+    data = helpers.build_engine_sid(
+        [song([(0x81, 0x01)], base_vol=0x0A)], {1: PLAIN}, patched=True
+    )
+    player = SoundMonitorPlayer(data)
+    found = playspec.binding(player.view(), player.entry)
+    assert found["vol_imm"] and found["vol_hook"] and not found["ramp_store"]
+    grid = player.render_grid(whole_song(3))
+    mirror = helpers.ENGINE_BASE + 0x2300 + 0x120
+    assert {row[VOLUME] & 0x0F for row in grid} == {0x09}
+    assert player.memory[mirror] == grid[-1][VOLUME]
+
+
+def test_a_patched_stop_leaves_volume_zero():
+    data = helpers.build_engine_sid([song([(0x81, 0x01)])], {1: PLAIN}, patched=True)
+    player = SoundMonitorPlayer(data)
+    flag = playspec.binding(player.view(), player.entry)["init_flag"]
+    player._mem[flag] = 2  # pylint: disable=protected-access
+    grid = player.render_grid(whole_song(FIRST_ROW + 6 * STEP))
+    assert grid[-1][VOLUME] == 0
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "DEMOS/M-R/Rape_1_end.sid",
+        "DEMOS/UNKNOWN/Lavender.sid",
+        "DEMOS/A-F/Future_Spy.sid",
+    ],
+)
+def test_the_spec_plays_a_tune_with_its_own_interrupts_as_its_6502_does(tune, path):
+    """Play address 0: each handler's call runs as the spec; the second and third are
+    rips that patched the volume routine and the glide, so they run their own hook."""
+    data = tune(path).read_bytes()
+    own = InterruptPlayer(SidImage.from_bytes(data), 0)
+    assert SoundMonitorPlayer(data).render_grid(whole_song(150)) == own.render_grid(
+        whole_song(150)
+    )
+
+
+def test_unnative_states_the_patch_hook_as_its_stores(tune):
+    """The rip's volume hook (``STA $D418`` and a mirror at ``$9F62``) as spec
+    statements, and the spec without the hook plays the same."""
+    data = tune("DEMOS/UNKNOWN/Lavender.sid").read_bytes()
+    player = SoundMonitorPlayer(data)
+    player.play_frame()
+    found = playspec.binding(player.memory, player.entry)
+    new = unnative(playspec.SPEC, found, player.memory)
+    assert "native " not in new.source
+    assert "mem[0xd418] :=" in new.source and "mem[0x9f62] :=" in new.source
+    equivalent(lambda spec: SoundMonitorPlayer(data, spec=spec), playspec.SPEC, new, 60)
