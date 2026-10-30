@@ -53,8 +53,8 @@ never committed. The `oracle` job needs Docker (`anarkiwi/sidtrace`) and renders
 each covered tune with `SoundMonitorPlayer`, asserting a frame-exact match — see
 [docs/format.md](docs/format.md#oracle-testing).
 
-See [docs/format.md](docs/format.md) for the container, detection, and
-song-data model, and its
+See [docs/format.md](docs/format.md) for the container, detection, song-data
+model and [song grammar](docs/format.md#song-grammar), and its
 [HVSC oracle survey](docs/format.md#hvsc-oracle-survey) section for the
 whole-song comparison over every HVSC Soundmonitor tune.
 

@@ -7,7 +7,7 @@ emits a self-consistent PSID (or bare ``.prg``) that the reader decodes.
 
 from __future__ import annotations
 
-from pysidtracker import write_psid
+from pysidtracker import write_psid  # re-exported for tests
 from pysidtracker.asm6502 import assemble
 
 from pysoundmonitor import constants as c
@@ -63,7 +63,13 @@ def _psid(payload, load, init, play, magic="PSID"):
 
 
 def build_payload(
-    sections, instruments, *, base=0x1000, with_freq=True, with_operands=True
+    sections,
+    instruments,
+    *,
+    base=0x1000,
+    with_freq=True,
+    with_operands=True,
+    bounds=None,
 ):
     """Build the raw C64 image (load..end) plus its ``(load, init, play)``."""
     mem = bytearray(0x10000)
@@ -109,6 +115,14 @@ def build_payload(
     mem[pos : pos + 3] = STA_DC05
     pos += 3
     end = pos
+    if bounds is not None:
+        start, last = bounds
+        glob = base + 0x2200
+        mem[glob : glob + 2] = bytes((last, start))
+        mem[pos : pos + 3] = bytes((c.CPX_ABS, glob & 0xFF, glob >> 8))
+        mem[pos + 3 : pos + 6] = bytes((c.LDX_ABS, (glob + 1) & 0xFF, glob >> 8))
+        pos += 6
+        end = glob + 2
     if with_freq:
         freq = base + 0x2100
         for i in range(c.NOTE_FREQ_LEN):
@@ -122,7 +136,7 @@ def build_payload(
         lo = freq + c.NOTE_FREQ_LEN
         mem[pos : pos + 3] = bytes((c.LDA_ABSX, lo & 0xFF, (lo >> 8) & 0xFF))
         pos += 3
-        end = freq + 2 * c.NOTE_FREQ_LEN
+        end = max(end, freq + 2 * c.NOTE_FREQ_LEN)
     return bytes(mem[base:end]), base, player, player + 0x20, anchor
 
 

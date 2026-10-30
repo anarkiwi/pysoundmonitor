@@ -1,5 +1,8 @@
 """Behaviour of the song-stream grammar and the reader built on it."""
 
+import re
+from pathlib import Path
+
 import pytest
 
 import helpers
@@ -121,3 +124,50 @@ def test_format_lists_the_grammar_streams():
     lines = list(fmt.listing(tune))
     assert lines[0] == "section 0 header:"
     assert any(line.lstrip().startswith("pattern") for line in lines)
+
+
+DOCS = Path(__file__).resolve().parent.parent / "docs" / "format.md"
+
+_ACCESSORS = {
+    "stream pointer lo": lambda t, v: t.stream_ptr(v, 7) & 0xFF,
+    "stream pointer hi": lambda t, v: t.stream_ptr(v, 7) >> 8,
+    "transpose": lambda t, v: t.transpose(v, 7),
+}
+
+
+def _documented_pages():
+    rows = re.findall(r"^\| `\+\$([0-9A-F]{3})` \| (.+?) \|$", DOCS.read_text(), re.M)
+    return [(int(offset, 16), label) for offset, label in rows]
+
+
+def test_documented_table_pages_are_where_the_grammar_reads_them():
+    pages = [(off, label) for off, label in _documented_pages() if off < 0xE00]
+    assert [off for off, _ in pages] == list(range(0, 0xE00, 0x100))
+    for offset, label in pages:
+        mem = bytearray(TABLES_LEN)
+        mem[offset + 7] = 0xA5
+        tables = GRAMMAR.parse_exact(bytes(mem), TRACK_TABLES)
+        voice = re.match(r"voice (\d) (.+)", label)
+        if voice:
+            number, what = int(voice.group(1)), voice.group(2)
+            if what == "spare":
+                reads = [
+                    accessor(tables, v)
+                    for accessor in _ACCESSORS.values()
+                    for v in range(3)
+                ] + [tables.header_ptr(7)]
+                assert not any(reads), label
+            else:
+                assert _ACCESSORS[what](tables, number) == 0xA5, label
+        else:
+            lo_hi = 0xA5 if label.endswith("lo") else 0xA500
+            assert tables.header_ptr(7) == lo_hi, label
+
+
+def test_documented_instrument_table_follows_the_track_tables():
+    rows = dict(_documented_pages())
+    assert rows[0xE00].startswith("instrument records")
+    record = bytes(range(16)) + bytes((0xFF,)) + bytes(7)
+    data = GRAMMAR.parse_exact(bytes(TABLES_LEN) + record, STEPS_ONLY)
+    assert TABLES_LEN == 0xE00
+    assert data.instruments.instruments[0].record == record[:16]
