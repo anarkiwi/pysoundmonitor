@@ -99,6 +99,10 @@ class TrackTables(NamedTuple):
         """Voice ``voice``'s transpose for section ``index``."""
         return self._page(voice * PAGES_PER_VOICE + 2, index)
 
+    def instrument_base(self, voice: int, index: int) -> int:
+        """Voice ``voice``'s instrument base for section ``index``."""
+        return self._page(voice * PAGES_PER_VOICE + 3, index)
+
     def header_ptr(self, index: int) -> int:
         """The section-header address for section ``index``."""
         first = 3 * PAGES_PER_VOICE

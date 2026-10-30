@@ -55,22 +55,23 @@ baked addresses.
 
 Layout, in byte offsets from the data base. Every table is one 256-byte page
 indexed by the section number; the grammar's `track_tables` rule is the 14
-pages below, of which the reader uses all but the spare ones:
+pages below. The per-voice instrument base is added to the `ctrl` instrument
+index of a row whose `ctrl` bit 7 is clear:
 
 | offset | page |
 |---|---|
 | `+$000` | voice 0 stream pointer lo |
 | `+$100` | voice 0 stream pointer hi |
 | `+$200` | voice 0 transpose |
-| `+$300` | voice 0 spare |
+| `+$300` | voice 0 instrument base |
 | `+$400` | voice 1 stream pointer lo |
 | `+$500` | voice 1 stream pointer hi |
 | `+$600` | voice 1 transpose |
-| `+$700` | voice 1 spare |
+| `+$700` | voice 1 instrument base |
 | `+$800` | voice 2 stream pointer lo |
 | `+$900` | voice 2 stream pointer hi |
 | `+$A00` | voice 2 transpose |
-| `+$B00` | voice 2 spare |
+| `+$B00` | voice 2 instrument base |
 | `+$C00` | section header pointer lo |
 | `+$D00` | section header pointer hi |
 | `+$E00` | instrument records (`index * 24`) |
@@ -123,12 +124,13 @@ registered with it, so `pysidtracker grammar TUNE` lists a tune's streams.
 
 ## Player and playback notes
 
-`SoundMonitorPlayer` is a [`pysidtracker.TunePlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md)
-subclass that reproduces the replay byte-exact. Rather than re-transcribe the
-copyrighted, relocatable player for each build, it runs the tune's **own** 6502
-`init`/`play` over the shared 64 KiB memory image (with the VIC-raster and
-voice-3 SID read-back observers the replay samples), reading back the SID
-register file each frame:
+`SoundMonitorPlayer` is a
+[`pysidtracker.playspec.SpecPlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/playspec.md)
+over `src/pysoundmonitor/specs/soundmonitor.play`. The tune's own `init` runs on
+the 6502 emulator as the PSID driver boots it (selecting the subtune, placing any
+relocated data); each play call is then the spec, run on the memory init left
+and bound to the build's own addresses, and the memory it leaves equals the
+tune's own 6502 play routine's:
 
 ```python
 from pysoundmonitor import SoundMonitorPlayer
@@ -139,18 +141,41 @@ writes = list(player.register_writes(250))   # pysidtracker RegWrite log
 player.render_wav("tune.wav", 250)           # pysidtracker.audio, emulated SID
 ```
 
-Both replay variations are reproduced and validated: the **CIA-timed** cohort
-(self-scheduled cadence via the `$DC04`/`$DC05` latch, e.g. `Only_3`, `Defu`,
-`Charts`) and the **fixed-cadence** PAL-video cohort (e.g. `Fi`, `Big_Boing`,
-`Into_Orbit`), across directly loaded `$A000` and relocated `$6xxx`/`$9xxx`
-builds. `SoundMonitorPlayer.cadence` derives the play period from what init
-programs; per-section cadence is also exposed on the model (`latch + 1`
-cycles/call, and `song.cia_latch`).
+### The playspec
+
+One play call is `entry` (the first call's init, or the stop when the song has
+ended), then, while playing, the voices' glide, vibrato, the filter sweep, the
+pulse sweeps up and down and the arpeggio, the row `clock`, the three `reader`
+machines on a row frame, and the volume. The song's tables are `ro` cells; the
+instrument copies, effect counters, frequency, pulse and SID mirrors are shared
+cells at the build's own addresses. Where the three voices' code differs the
+spec keeps the difference: voice 1's new-note path stores its control mirror in
+voice 0's cell, and voice `n` steps the arpeggios of voices `n` and above.
+
+The binder (`pysoundmonitor.playspec.binding`) reads the layout from the reader's
+discovery (data base, note-frequency tables) and from the operands of the play
+code: the first-call flag, the section bounds, the instrument-copy and filter
+work blocks, the zero-page pointer block, whether the section loader writes the
+CIA latch, and whether the section header is read through a fixed pointer. It
+binds the `$C000` builds (CIA-timed and fixed-cadence), the relocated `$6000`
+build and the `$9FFE` section-bound build alike. `pysidtracker playspec check
+src/pysoundmonitor/specs/soundmonitor.play` runs the static checks.
+
+`SoundMonitorPlayer(data, validate=True)` parses each section header and
+pattern the spec opens under the song grammar; `player.validator.failures()`
+lists any that do not parse.
+
+Both replay variations are reproduced: the **CIA-timed** cohort (self-scheduled
+cadence via the `$DC04`/`$DC05` latch, e.g. `Only_3`, `Defu`, `Charts`) and the
+**fixed-cadence** PAL-video cohort (e.g. `Fi`, `Big_Boing`, `Into_Orbit`).
+`SoundMonitorPlayer.cadence` derives the play period from what init programs;
+per-section cadence is also exposed on the model (`latch + 1` cycles/call, and
+`song.cia_latch`).
 
 ### Tunes that install their own interrupt
 
 A header play address of 0 (an RSID such as `Sidewalk`) means init installs the
-play handler itself. `TunePlayer` then plays the tune under
+play handler itself. `SoundMonitorPlayer` then plays the tune under
 [`pysidtracker.irqhost.InterruptPlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md),
 which boots and runs it as the sidtrace oracle's sidplayfp does: the PSID driver
 from power-on, every interrupt the tune programs (VIC raster, CIA #1 Timer A/B
@@ -159,7 +184,9 @@ sprites, cycle for cycle. Its trace equals the oracle's, so an NMI sample player
 beside the music IRQ, or a main loop writing `$D418`, renders byte-exact.
 `render_grid` frames the rows at the play source's raises exactly as the oracle
 grid is framed; `play_frame` advances one such frame. A tune whose interrupts
-never run raises `SidParseError` when rendered.
+never run raises `SidParseError` when rendered. `SpecPlayer` does not yet trap
+entries under the interrupt host, so these tunes run the tune's own 6502, not the
+spec.
 
 ### Oracle testing
 
@@ -168,7 +195,12 @@ length with `SoundMonitorPlayer` and asserts the per-frame SID register grid
 matches the
 [`sidtrace`](https://github.com/anarkiwi/sidtrace) `sidplayfp` oracle frame for
 frame (`pysidtracker.make_oracle_fixtures`). It is `oracle`-marked and runs in a
-dedicated CI job (`pytest -m oracle`) with Docker; HVSC `.sid` files are
+dedicated CI job (`pytest -m oracle`) with Docker. The same job runs
+`tests/test_playspec_oracle.py`: the spec's 64 KiB (outside the stack page and
+the SID window) equals the tune's own 6502 play routine's after every call of
+the whole song, `tv.validate` proves `reader[0].parse` equal to the 6502 row
+reader of `Only_3` for all initial memory, and bounded checking holds the
+spec's tempo invariant from the tune's post-init memory. HVSC `.sid` files are
 copyright works, fetched to a cache and never committed. See the base
 [oracle-testing guide](https://github.com/anarkiwi/pysidtracker/blob/main/docs/oracle-testing.md).
 

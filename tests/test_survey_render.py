@@ -59,7 +59,7 @@ def test_render_matches_player_and_reports_build(relpath, info, tune):
 
 
 def test_play_reports_unknown_trigger(monkeypatch):
-    data = helpers.build_playable_sid()
+    data = helpers.build_engine_sid()
     unknown = Cadence(PAL_CYCLES_PER_FRAME, None, PAL_CLOCK_HZ)
     monkeypatch.setattr(cadence_mod, "playroutine_cadence", lambda *_, **__: unknown)
     grid, info = oracle_hvsc._play(data, 1, 20)

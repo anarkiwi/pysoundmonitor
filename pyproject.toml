@@ -20,7 +20,7 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio",
 ]
 dependencies = [
-    # TunePlayer runs the replay; survey file --song, cadence_info and the
+    # playspec.SpecPlayer runs the replay; survey file --song, cadence_info and the
     # hvsc test fixture back the scripts and tests.
     "pysidtracker>=0.43.0",
 ]
@@ -48,7 +48,7 @@ Issues = "https://github.com/anarkiwi/pysoundmonitor/issues"
 where = ["src"]
 
 [tool.setuptools.package-data]
-pysoundmonitor = ["*.lark"]
+pysoundmonitor = ["*.lark", "specs/*.play"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

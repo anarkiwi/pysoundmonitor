@@ -1,0 +1,722 @@
+// Soundmonitor (64'er / Hulsbeck) playroutine. One play call: the init the
+// first call runs, then, while playing, the voices' glide, vibrato, filter,
+// pulse and arpeggio effects, the row clock and the three pattern readers.
+// Addresses spelled as 0xCxxx are the canonical $C000 build; each cell is bound
+// to the build's own address through L.rec / L.misc (see the binder).
+spec soundmonitor;
+
+layout {
+  entry, init_flag, last_sec, first_sec, rec, misc, fill, fill_hi, ptrs, base,
+  freq_hi, freq_lo, hdr_zp, hdr_fixed: addr;
+  fill_n, rec_n: byte;
+  cia: flag;
+}
+
+const REC = 0xCBFA;
+const MISC = 0xCDED;
+const SID = 0xD400;
+const PATLEN_MAX = 255;
+
+// ---- song data the player only reads -------------------------------------
+cell track0: ptr[256] @ (L.base + 0x000, L.base + 0x100) ro;
+cell track1: ptr[256] @ (L.base + 0x400, L.base + 0x500) ro;
+cell track2: ptr[256] @ (L.base + 0x800, L.base + 0x900) ro;
+cell headers: ptr[256] @ (L.base + 0xC00, L.base + 0xD00) ro;
+cell xpose0: u8[256] @ L.base + 0x200 ro;
+cell xpose1: u8[256] @ L.base + 0x600 ro;
+cell xpose2: u8[256] @ L.base + 0xA00 ro;
+cell ibase0: u8[256] @ L.base + 0x300 ro;
+cell ibase1: u8[256] @ L.base + 0x700 ro;
+cell ibase2: u8[256] @ L.base + 0xB00 ro;
+cell instruments: u8[0x1800] @ L.base + 0xE00 ro;
+cell freq_hi: u8[128] @ L.freq_hi ro;
+cell freq_lo: u8[128] @ L.freq_lo ro;
+
+// ---- fixed work cells ------------------------------------------------------
+cell row: u8 @ 0x02C0;
+cell section: u8 @ 0x02C1;
+cell playing: u8 @ 0x02C2;
+cell enabled: u8 @ 0x02C3;
+cell loop_mode: u8 @ 0x02C4;
+cell mutes: u8 @ 0x02C6;
+cell t0: u8 @ 0x02C7;
+cell t1: u8 @ 0x02C8;
+cell last_note: u8[3] @ 0x02C9;
+cell last_ctrl: u8[3] @ 0x02CC;
+cell ibase: u8[3] @ 0x02CF;
+cell xpose: u8[3] @ 0x02D2;
+cell sptr: ptr[4] @ L.ptrs;
+cell hdr_tab: ptr[1] @ L.hdr_zp;
+cell sid: u8[32] @ SID out;
+
+// ---- the song header's own cells (code area) ---------------------------------
+cell init_flag: u8 @ L.init_flag;
+cell last_sec: u8 @ L.last_sec;
+cell first_sec: u8 @ L.first_sec;
+cell cia_latch: u8[2] @ 0xDC04 out;
+
+// ---- player work cells: instrument copies -----------------------------------
+cell slot: u8[0x40] @ L.rec;
+cell ftail: u8[8] @ L.rec + (0xCC42 - REC);
+cell tempo_ctr: u8 @ L.rec + (0xCD80 - REC);
+cell tempo_rld: u8 @ L.rec + (0xCD81 - REC);
+cell glide_on: u8[3] @ L.rec + (0xCD82 - REC);
+cell glide_lim: u8[3] @ L.rec + (0xCD85 - REC);
+cell gl_lim: u8 @ L.rec + (0xCD88 - REC);
+cell gl_note: u8 @ L.rec + (0xCD89 - REC);
+cell glide_hi: u8[3] @ L.rec + (0xCD8A - REC);
+cell note_hi: u8[3] @ L.rec + (0xCD8D - REC);
+cell gl_lo: u8 @ L.rec + (0xCD90 - REC);
+cell gl_hi: u8 @ L.rec + (0xCD91 - REC);
+cell vib_delay: u8[3] @ L.rec + (0xCD92 - REC);
+cell vib_per: u8[3] @ L.rec + (0xCD95 - REC);
+cell vib_dep: u8[3] @ L.rec + (0xCD98 - REC);
+cell vib_cnt: u8[3] @ L.rec + (0xCD9B - REC);
+cell fsw: u8[4] @ L.rec + (0xCD9E - REC);
+cell pw_up_rld: u8[3] @ L.rec + (0xCDA2 - REC);
+cell pw_dn_rld: u8[3] @ L.rec + (0xCDA5 - REC);
+cell pw_up_cnt: u8[3] @ L.rec + (0xCDA8 - REC);
+cell pw_dn_cnt: u8[3] @ L.rec + (0xCDAB - REC);
+cell pw_step: u8[3] @ L.rec + (0xCDAE - REC);
+cell patlen: u8 @ L.rec + (0xCDB5 - REC);
+cell mode: u8[3] @ L.rec + (0xCDB7 - REC);
+cell ramp_len: u8 @ L.rec + (0xCDBA - REC);
+cell ramp_ctr: u8 @ L.rec + (0xCDBB - REC);
+cell ramp_vol: u8 @ L.rec + (0xCDBC - REC);
+cell saved_ptr: u8[2] @ L.rec + (0xCDC0 - REC);
+cell saved_xy: u8[2] @ L.rec + (0xCDC2 - REC);
+cell note_x: u8[3] @ L.rec + (0xCDC5 - REC);
+cell arp_idx: u8[3] @ L.rec + (0xCDC8 - REC);
+cell arp_on: u8[3] @ L.rec + (0xCDCB - REC);
+cell arp_base: u8[3] @ L.rec + (0xCDCE - REC);
+cell detune: u8[3] @ L.rec + (0xCDD2 - REC);
+cell arp_tmp: u8 @ L.rec + (0xCDD5 - REC);
+cell ctrl_mir: u8[3] @ L.rec + (0xCDD6 - REC);
+
+// ---- player work cells: filter flags up ----------------------------------------
+cell fflags: u8 @ L.misc;
+cell base_vol: u8 @ L.misc + (0xCDEF - MISC);
+cell tmp: u8[4] @ L.misc + (0xCDF0 - MISC);
+cell vreg: u8[18] @ L.misc + (0xCDF4 - MISC);
+cell fc_lo: u8 @ L.misc + (0xCE09 - MISC);
+cell fc_hi: u8 @ L.misc + (0xCE0A - MISC);
+cell res_mir: u8 @ L.misc + (0xCE0B - MISC);
+cell vol_mir: u8 @ L.misc + (0xCE0C - MISC);
+cell target: u8[16] @ L.misc + (0xCE0D - MISC);
+
+// ---- the glide ---------------------------------------------------------------
+proc glide_set(v: u8) {
+  vreg[7 * v] := target[7 * v];
+  sid[7 * v] := target[7 * v];
+  vreg[7 * v + 1] := target[7 * v + 1];
+  sid[7 * v + 1] := target[7 * v + 1];
+  glide_on[v] := 0;
+}
+
+proc glide_sub(v: u8) {
+  let b0 = borrow(vreg[7 * v], gl_lo);
+  vreg[7 * v] := vreg[7 * v] - gl_lo;
+  sid[7 * v] := vreg[7 * v];
+  vreg[7 * v + 1] := vreg[7 * v + 1] - gl_hi - u8(b0);
+  sid[7 * v + 1] := vreg[7 * v + 1];
+}
+
+proc glide_add(v: u8) {
+  let c0 = carry(vreg[7 * v], gl_lo);
+  vreg[7 * v] := vreg[7 * v] + gl_lo;
+  sid[7 * v] := vreg[7 * v];
+  vreg[7 * v + 1] := vreg[7 * v + 1] + gl_hi + u8(c0);
+  sid[7 * v + 1] := vreg[7 * v + 1];
+}
+
+proc glide_to_target(v: u8) {
+  let hi = vreg[7 * v + 1];
+  let thi = target[7 * v + 1];
+  let lo = vreg[7 * v];
+  let tlo = target[7 * v];
+  let below = false;
+  if hi == thi {
+    if lo == tlo {
+      return;
+    }
+    below := lo < tlo;
+  } else {
+    below := hi < thi;
+  }
+  if below {
+    let b0 = borrow(tlo, lo);
+    t0 := tlo - lo;
+    t1 := thi - hi - u8(b0);
+    if t1 < gl_hi || (t1 == gl_hi && t0 < gl_lo) {
+      glide_set(v);
+    } else {
+      glide_add(v);
+    }
+  } else {
+    let b0 = borrow(lo, tlo);
+    t0 := lo - tlo;
+    t1 := hi - thi - u8(b0);
+    if t1 < gl_hi || (t1 == gl_hi && t0 < gl_lo) {
+      glide_set(v);
+    } else {
+      glide_sub(v);
+    }
+  }
+}
+
+proc glide(v: u8) {
+  t0 := mode[v];
+  if t0 == 0 {
+    glide_to_target(v);
+  } elif t0 & 1 != 0 {
+    target[7 * v] := 2;
+    target[7 * v + 1] := gl_lim;
+    if t0 & 4 != 0 {
+      glide_to_target(v);
+      return;
+    }
+    if vreg[7 * v + 1] < gl_lim {
+      vreg[7 * v + 1] := gl_note;
+    }
+    glide_sub(v);
+  } elif t0 & 2 != 0 {
+    target[7 * v] := 0xFE;
+    target[7 * v + 1] := gl_lim;
+    if t0 & 4 != 0 {
+      glide_to_target(v);
+      return;
+    }
+    if vreg[7 * v + 1] >= gl_lim {
+      vreg[7 * v + 1] := gl_note;
+    }
+    glide_add(v);
+  } else {
+    glide_to_target(v);
+  }
+}
+
+// ---- the vibrato -----------------------------------------------------------------
+proc vibrato(v: u8) {
+  if vib_per[v] == 0 {
+    return;
+  }
+  if vib_delay[v] != 0xFF {
+    vib_delay[v] -= 1;
+    if vib_delay[v] != 0xFF {
+      return;
+    }
+    vib_per[v] &= 0xFE;
+    t0 := vib_per[v] & 0x80;
+    vib_cnt[v] := ((vib_per[v] & 0x7F) >> 1) | t0;
+    return;
+  }
+  if neg(vib_cnt[v]) {
+    let c0 = carry(vreg[7 * v], vib_dep[v]);
+    vreg[7 * v] += vib_dep[v];
+    sid[7 * v] := vreg[7 * v];
+    vreg[7 * v + 1] += u8(c0);
+    sid[7 * v + 1] := vreg[7 * v + 1];
+    vib_cnt[v] -= 1;
+    if neg(vib_cnt[v]) {
+      return;
+    }
+    vib_cnt[v] := vib_per[v] & 0x7F;
+  } else {
+    let b0 = borrow(vreg[7 * v], vib_dep[v]);
+    vreg[7 * v] -= vib_dep[v];
+    sid[7 * v] := vreg[7 * v];
+    vreg[7 * v + 1] -= u8(b0);
+    sid[7 * v + 1] := vreg[7 * v + 1];
+    vib_cnt[v] -= 1;
+    if !neg(vib_cnt[v]) {
+      return;
+    }
+    vib_cnt[v] := vib_per[v] | 0x80;
+  }
+}
+
+// ---- the filter sweep --------------------------------------------------------------
+proc filter_out() {
+  sid[0x15] := fc_lo;
+  sid[0x16] := fc_hi;
+}
+
+proc filter_down() {
+  t0 := fsw[2] << 4;
+  let b0 = borrow(fc_lo, t0);
+  fc_lo -= t0;
+  fc_hi := fc_hi - fsw[3] - u8(b0);
+  filter_out();
+}
+
+proc filter_start() {
+  fc_hi := ftail[2];
+  sid[0x16] := ftail[2];
+  fsw[0] := ftail[3];
+  fsw[1] := ftail[4];
+  fsw[2] := ftail[5];
+  fsw[3] := ftail[6];
+  fflags := ftail[7];
+  fc_lo := 0;
+  sid[0x15] := 0;
+}
+
+proc filter_sweep_down() {
+  fsw[1] -= 1;
+  if fc_hi > fsw[3] {
+    filter_down();
+  } elif fflags & 0x40 != 0 {
+    filter_down();
+  } else {
+    filter_out();
+  }
+}
+
+proc filter() {
+  if fsw[0] != 0 {
+    fsw[0] -= 1;
+    t0 := fsw[2] & 0xF0;
+    let c0 = carry(fc_lo, t0);
+    fc_lo += t0;
+    fc_hi := fc_hi + fsw[3] + u8(c0);
+    filter_out();
+    return;
+  }
+  if fsw[1] != 0 {
+    filter_sweep_down();
+    return;
+  }
+  if fflags & 0x10 != 0 {
+    fsw[0] := ftail[3];
+    fsw[1] := ftail[4];
+    filter_sweep_down();
+    return;
+  }
+  if fflags & 0x20 != 0 {
+    filter_start();
+  }
+}
+
+// ---- the pulse width sweeps ----------------------------------------------------
+proc pulse_up(v: u8) {
+  if pw_up_cnt[v] == 0 {
+    return;
+  }
+  let c0 = carry(vreg[7 * v + 2], pw_step[v]);
+  vreg[7 * v + 2] += pw_step[v];
+  sid[7 * v + 2] := vreg[7 * v + 2];
+  vreg[7 * v + 3] += u8(c0);
+  sid[7 * v + 3] := vreg[7 * v + 3];
+  pw_up_cnt[v] -= 1;
+}
+
+proc pulse_down(v: u8) {
+  if pw_up_cnt[v] != 0 {
+    return;
+  }
+  if pw_dn_cnt[v] == 0 {
+    if mode[v] & 0x10 != 0 {
+      pw_up_cnt[v] := pw_up_rld[v];
+      pw_dn_cnt[v] := pw_dn_rld[v];
+    }
+    return;
+  }
+  let b0 = borrow(vreg[7 * v + 2], pw_step[v]);
+  vreg[7 * v + 2] -= pw_step[v];
+  sid[7 * v + 2] := vreg[7 * v + 2];
+  vreg[7 * v + 3] -= u8(b0);
+  sid[7 * v + 3] := vreg[7 * v + 3];
+  pw_dn_cnt[v] -= 1;
+}
+
+// ---- the arpeggio ----------------------------------------------------------------
+proc arp_start(v: u8, ctrl: u8) {
+  arp_base[v] := ctrl;
+  arp_idx[v] := 0;
+  arp_on[v] := 1;
+}
+
+proc arp_step(v: u8) {
+  if arp_on[v] == 0 {
+    return;
+  }
+  saved_xy[1] := 7 * v;
+  saved_xy[0] := v;
+  arp_tmp := detune[v];
+  let y = arp_base[v] + arp_idx[v];
+  stream hd = sptr[3] @ y grammar "pysoundmonitor.grammar:GRAMMAR:section_header";
+  let off = hd[0];
+  let c0 = carry(off, note_x[v]);
+  let x = off + note_x[v];
+  let c1 = carry(freq_lo[x], arp_tmp, c0);
+  let lo = freq_lo[x] + arp_tmp + u8(c0);
+  vreg[7 * v] := lo;
+  target[7 * v] := lo;
+  sid[7 * v] := lo;
+  let hi = freq_hi[x] + u8(c1);
+  vreg[7 * v + 1] := hi;
+  target[7 * v + 1] := hi;
+  sid[7 * v + 1] := hi;
+  arp_idx[v] := (arp_idx[v] + 1) & 7;
+}
+
+// ---- the volume ----------------------------------------------------------------------
+proc volume() {
+  if ramp_len == 0 {
+    vol_mir := (vol_mir & 0xF0) | base_vol;
+    sid[0x18] := vol_mir;
+    return;
+  }
+  ramp_ctr -= 1;
+  if ramp_ctr != 0 {
+    return;
+  }
+  if ramp_vol & 0x0F == 0 {
+    return;
+  }
+  t0 := (ramp_vol & 0x0F) - 1;
+  ramp_vol := t0;
+  ramp_ctr := ramp_len;
+  vol_mir := (vol_mir & 0xF0) | t0;
+  sid[0x18] := vol_mir;
+}
+
+// ---- sections ----------------------------------------------------------------------------
+proc load_section(x: u8) {
+  sptr[0] := track0[x];
+  sptr[1] := track1[x];
+  sptr[2] := track2[x];
+  if L.hdr_fixed != 0 {
+    sptr[3] := L.hdr_fixed;
+    hdr_tab[0] := headers[x];
+  } else {
+    sptr[3] := headers[x];
+  }
+  stream hd = sptr[3] @ 0 grammar "pysoundmonitor.grammar:GRAMMAR:section_header";
+  let latch_lo = next hd;
+  if L.cia {
+    cia_latch[0] := latch_lo;
+  }
+  let latch_hi = next hd;
+  if L.cia && latch_hi >= 6 {
+    cia_latch[1] := latch_hi;
+  }
+  tempo_rld := next hd;
+  patlen := next hd;
+  let ramp = next hd;
+  if ramp == 0xFF {
+    ramp_len := 0;
+  } elif ramp_len == 0 {
+    ramp_len := ramp;
+    ramp_ctr := ramp;
+    ramp_vol := vol_mir & 0x0F;
+  }
+  let vol = next hd;
+  base_vol := vol & 0x0F;
+  let last = (patlen << 1) - 1;
+  stream p0 = sptr[0] @ last grammar "pysoundmonitor.grammar:GRAMMAR:pattern";
+  last_ctrl[0] := p0[0];
+  stream p1 = sptr[1] @ last grammar "pysoundmonitor.grammar:GRAMMAR:pattern";
+  last_ctrl[1] := p1[0];
+  stream p2 = sptr[2] @ last grammar "pysoundmonitor.grammar:GRAMMAR:pattern";
+  last_ctrl[2] := p2[0];
+  let s = section;
+  xpose[0] := xpose0[s];
+  ibase[0] := ibase0[s];
+  xpose[1] := xpose1[s];
+  ibase[1] := ibase1[s];
+  xpose[2] := xpose2[s];
+  ibase[2] := ibase2[s];
+  row := 0;
+}
+
+// ---- the pattern reader --------------------------------------------------------------------------
+proc load_instrument(v: u8, ctrl: u8) {
+  saved_xy[0] := ctrl;
+  saved_xy[1] := 0x0F + 24 * v;
+  saved_ptr[0] := lo(sptr[3]);
+  saved_ptr[1] := hi(sptr[3]);
+  let x = ctrl & 0x0F;
+  if t1 & 0x80 == 0 {
+    x += ibase[v];
+  }
+  tmp[0] := lo(u16(x) << 4);
+  tmp[1] := hi(u16(x) << 4);
+  tmp[2] := lo(u16(x) << 3);
+  tmp[3] := hi(u16(x) << 3);
+  let at = (u16(x) << 4) + (u16(x) << 3);
+  for i in 0..16 {
+    slot[24 * v + i] := instruments[at + i];
+  }
+  if instruments[at + 16] != 0xFF {
+    for i in 0..8 {
+      ftail[i] := instruments[at + 16 + i];
+    }
+  }
+}
+
+proc filter_regs() {
+  res_mir := ftail[1];
+  sid[0x17] := ftail[1];
+  vol_mir := ftail[0];
+}
+
+// ---- the first call and the stop ------------------------------------------------------------------
+proc clear_state() {
+  for i in 0..0x18 {
+    let y = 0x17 - i;
+    sid[y] := 0;
+    mem[L.misc + (0xCDF4 - MISC) + u16(y)] := 0;
+    mem[L.misc + (0xCE0D - MISC) + u16(y)] := 0;
+  }
+  vol_mir := 0x0F;
+  sid[4] := 8;
+  sid[4] := 0;
+  sid[0xB] := 8;
+  sid[0xB] := 0;
+  sid[0x12] := 8;
+  sid[0x12] := 0;
+  for i in 0..L.fill_n {
+    mem[L.fill + L.fill_n - i] := 8;
+  }
+  for i in 0..L.rec_n + 1 {
+    mem[L.rec + L.rec_n - i] := 8;
+  }
+}
+
+proc init(flag: u8) {
+  loop_mode := 0;
+  if flag == 2 {
+    loop_mode := 0xFF;
+  }
+  clear_state();
+  tempo_rld := 0;
+  init_flag := 0;
+  playing := 1;
+  enabled := 1;
+  section := first_sec;
+  load_section(first_sec);
+  row := 0xFF;
+  tempo_ctr := 7;
+}
+
+// ---- the machines ------------------------------------------------------------------------------------------
+machine entry {
+  signal run: bool = false;
+  step {
+    if init_flag != 0 {
+      init(init_flag);
+    }
+    if enabled != 0 {
+      run := true;
+    } elif playing != 0 {
+      sid[4] := 0;
+      sid[0xB] := 0;
+      sid[0x12] := 0;
+      sid[0x17] := 0;
+      playing := 0;
+      sid[0x18] := 0x0F;
+      tempo_ctr := 7;
+    }
+  }
+}
+
+machine glider[x in 0..3] {
+  step {
+    if glide_on[x] != 0 {
+      gl_lo := glide_on[x];
+      gl_lim := glide_lim[x];
+      gl_note := note_hi[x];
+      gl_hi := glide_hi[x];
+      glide(x);
+    }
+  }
+}
+
+machine vibrator[x in 0..3] {
+  step {
+    vibrato(x);
+  }
+}
+
+machine sweeper {
+  step {
+    filter();
+  }
+}
+
+machine pulser_up[x in 0..3] {
+  step {
+    pulse_up(x);
+  }
+}
+
+machine pulser_down[x in 0..3] {
+  step {
+    pulse_down(x);
+  }
+}
+
+machine arpeggiator[x in 0..3] {
+  step {
+    arp_step(x);
+  }
+}
+
+machine clock {
+  signal rows: bool = false;
+  signal vol: bool = false;
+  step {
+    playing := 1;
+    if tempo_ctr != 0 {
+      tempo_ctr -= 1;
+      vol := true;
+      return;
+    }
+    tempo_ctr := tempo_rld;
+    row += 1;
+    if row >= patlen {
+      if section == last_sec {
+        if loop_mode != 0 {
+          enabled := 0;
+          return;
+        }
+        section := first_sec;
+        load_section(first_sec);
+      } else {
+        section += 1;
+        load_section(section);
+      }
+    }
+    rows := true;
+    vol := true;
+  }
+}
+
+machine reader[x in 0..3] {
+  proc parse() {
+    if mutes & ite(x == 0, 1, ite(x == 1, 2, 4)) != 0 {
+      return;
+    }
+    let y = row << 1;
+    stream ps = sptr[x] @ y grammar "pysoundmonitor.grammar:GRAMMAR:pattern";
+    t0 := ps[0];
+    t1 := ps[1];
+    if t0 == 0 {
+      sid[7 * x + 4] := slot[24 * x + 8];
+      ctrl_mir[x] := slot[24 * x + 8];
+    } elif t0 != 0x80 {
+      load_instrument(x, t1);
+      detune[x] := slot[24 * x + 15];
+      let n = t0 & 0x7F;
+      if t1 & 0x20 == 0 {
+        n += xpose[x];
+      }
+      note_x[x] := n;
+      let c0 = carry(freq_lo[n], detune[x]);
+      let lo = freq_lo[n] + detune[x];
+      let hi = freq_hi[n] + u8(c0);
+      if slot[24 * x + 10] == 0 || t1 & 0x10 == 0 {
+        vreg[7 * x] := lo;
+        vreg[7 * x + 1] := hi;
+      }
+      target[7 * x] := lo;
+      target[7 * x + 1] := hi;
+      note_hi[x] := hi;
+      if t0 & 0x80 == 0 {
+        sid[7 * x] := vreg[7 * x];
+        sid[7 * x + 1] := vreg[7 * x + 1];
+        sid[7 * x + 4] := slot[24 * x + 8];
+        ctrl_mir[x] := slot[24 * x + 8];
+      } else {
+        arp_on[x] := 0;
+        if t1 & 0x40 != 0 {
+          arp_start(x, last_ctrl[x]);
+          if x == 0 {
+            arp_step(0);
+          }
+          if x != 2 {
+            arp_step(1);
+          }
+          arp_step(2);
+        }
+        mode[x] := slot[24 * x + 9];
+        let wide = mode[x] & 0x20;
+        vreg[7 * x + 2] := slot[24 * x + 4] << 4;
+        sid[7 * x + 2] := slot[24 * x + 4] << 4;
+        vreg[7 * x + 3] := slot[24 * x + 4] >> 4;
+        sid[7 * x + 3] := slot[24 * x + 4] >> 4;
+        pw_up_rld[x] := slot[24 * x + 5];
+        pw_up_cnt[x] := ite(wide == 0x20, 0, slot[24 * x + 5]);
+        pw_dn_cnt[x] := slot[24 * x + 6];
+        pw_dn_rld[x] := slot[24 * x + 6];
+        glide_on[x] := slot[24 * x + 10];
+        glide_hi[x] := slot[24 * x + 11];
+        glide_lim[x] := slot[24 * x + 3];
+        vib_dep[x] := slot[24 * x + 12];
+        vib_per[x] := slot[24 * x + 13];
+        vib_delay[x] := slot[24 * x + 14];
+        pw_step[x] := slot[24 * x + 7];
+        sid[7 * x + 4] := ctrl_mir[x] & 0xFE;
+        sid[7 * x + 5] := slot[24 * x + 1];
+        sid[7 * x + 6] := slot[24 * x + 2];
+        sid[7 * x] := vreg[7 * x];
+        sid[7 * x + 1] := vreg[7 * x + 1];
+        if ftail[7] & ite(x == 0, 1, ite(x == 1, 2, 4)) != 0 {
+          filter_start();
+        }
+        sid[7 * x + 4] := slot[24 * x];
+        ctrl_mir[ite(x == 1, 0, x)] := slot[24 * x];
+        filter_regs();
+      }
+    }
+    last_note[x] := t0;
+    last_ctrl[x] := t1;
+  }
+
+  step {
+    parse();
+  }
+}
+
+machine mixer {
+  step {
+    volume();
+  }
+}
+
+schedule {
+  entry;
+  if entry.run {
+    for v in 0..3 {
+      glider[v];
+    }
+    for v in 0..3 {
+      vibrator[v];
+    }
+    sweeper;
+    for v in 0..3 {
+      pulser_up[v];
+    }
+    for v in 0..3 {
+      pulser_down[v];
+    }
+    for v in 0..3 {
+      arpeggiator[v];
+    }
+    clock;
+    if clock.rows {
+      for v in 0..3 {
+        reader[v];
+      }
+    }
+    if clock.vol {
+      mixer;
+    }
+  }
+}
+
+// Each call counts the divider down, reloads it, or starts it afresh.
+invariant tempo_steps:
+  tempo_ctr == old(tempo_ctr) || tempo_ctr == old(tempo_ctr) - 1
+  || tempo_ctr == old(tempo_rld) || tempo_ctr == 6 || tempo_ctr == 7;

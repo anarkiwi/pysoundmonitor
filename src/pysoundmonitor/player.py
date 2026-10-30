@@ -1,40 +1,132 @@
-"""Byte-exact Soundmonitor replay as a :class:`~pysidtracker.TunePlayer`.
+"""Byte-exact Soundmonitor replay: ``specs/soundmonitor.play`` run on a tune's init.
 
-Soundmonitor's replay is relocatable and drives its cadence from inside the tune
-(the CIA-timed cohort latches ``$DC04``/``$DC05``; the fixed-cadence cohort runs
-off the PAL video frame), so a static transcription would have to re-derive that
-per build. :class:`SoundMonitorPlayer` instead runs the tune's *own* 6502
-``init`` and ``play`` routines through pysidtracker's
-:class:`~pysidtracker.TunePlayer` (jennings, or the interrupt host for a tune
-with play address 0). The per-frame grid is validated byte-exact against the
-``sidtrace`` oracle (see the oracle test). Reading ``.sid``/``.prg`` containers
-is routed through :class:`~pysidtracker.SidImage`; :class:`SoundMonitorSidParser`
-gives the same image the family ``parse``/``detect`` surface.
+The tune's own init runs in the 6502 emulator as the PSID driver boots it
+(power-on RAM, PAL/NTSC flag, banking; selecting the subtune and placing any
+relocated data); each play call is then the playspec of
+:mod:`pysoundmonitor.playspec`, run on the memory the init left, at the addresses
+the build's own operands name. The tune's play routine (banking, the CIA-timed
+cohort's wrapper) runs on the CPU and each call into the modelled entry runs as
+the spec. A tune with play address 0 drives the replay from the interrupts its
+init installs, so it plays on pysidtracker's :class:`~pysidtracker.irqhost.InterruptPlayer`,
+framed at its play source's raises as the oracle is. The per-frame grid is
+validated byte-exact against the ``sidtrace`` oracle (see the oracle test).
+Reading ``.sid``/``.prg`` containers is routed through :class:`~pysidtracker.SidImage`;
+:class:`SoundMonitorSidParser` gives the same image the family ``parse``/``detect``
+surface.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterator, List, Optional, Union
 
-from pysidtracker import BaseSidParser, SidImage, TunePlayer
+from pysidtracker import BaseSidParser, SidImage
+from pysidtracker import registers as reg
 from pysidtracker.audio import frames_to_seconds, render_player_wav
+from pysidtracker.cadence import Cadence, playroutine_cadence
+from pysidtracker.errors import reraise_as
+from pysidtracker.irqhost import InterruptPlayer
+from pysidtracker.playspec import SpecPlayer
+from pysidtracker.reglog import RegWrite, register_writes_from_player
 
+from . import playspec
 from .errors import SidParseError
 from .model import Song
 from .reader import find_fingerprint, locate_song, parse
 
 
-class SoundMonitorPlayer(TunePlayer):
+class SoundMonitorPlayer(SpecPlayer):
     """Play a Soundmonitor tune one frame at a time, byte-exact to the oracle.
 
     Constructed from raw ``.sid`` bytes (or a :class:`~pysidtracker.SidImage`);
     ``subtune`` selects the sub-song (passed to ``init`` in the accumulator).
     :meth:`render_grid` yields the 25-register, forward-filled per-frame grid;
     :meth:`register_writes` and :meth:`render_wav` reuse the shared reglog/audio
-    surfaces off the same replay.
+    surfaces off the same replay. With ``validate`` the streams the spec opens
+    are parsed under the song grammar (see ``validator``).
     """
 
     error_class = SidParseError
+
+    def __init__(
+        self,
+        data: Union[bytes, bytearray, SidImage],
+        subtune: int = 0,
+        *,
+        max_cycles: int = 8_000_000,
+        validate: bool = False,
+        bind=playspec.binding,
+    ):
+        image = data if isinstance(data, SidImage) else SidImage.from_bytes(bytes(data))
+        header = image.header
+        if header is None:
+            raise self.error_class("cannot play a bare .prg: image has no SID header")
+        init = header.init_address or header.real_load_address
+        self._sid = image.container + image.image
+        self._subtune = subtune
+        self._cadence: Optional[Cadence] = None
+        self._hosted = None if header.play_address else InterruptPlayer(image, subtune)
+        super().__init__(
+            playspec.SPEC,
+            image.image,
+            image.load,
+            init,
+            header.play_address or init,
+            subtune,
+            bind=bind,
+            entries=playspec.entries,
+            validate=validate,
+            max_cycles=max_cycles,
+            sid_model=reg.sid_model_for_flags(header.flags),
+            ntsc=header.is_ntsc,
+        )
+
+    @property
+    def cadence(self) -> Cadence:
+        """The tune's play-routine :class:`~pysidtracker.cadence.Cadence` (cached)."""
+        if self._cadence is None:
+            self._cadence = playroutine_cadence(self._sid, subtune=self._subtune)
+        return self._cadence
+
+    @property
+    def cycles_per_frame(self) -> int:
+        """CPU cycles between play calls (the period a WAV render spaces frames by)."""
+        return self.cadence.cycles_per_call
+
+    def _init(self, subtune: int) -> None:
+        if self._hosted is None:
+            with reraise_as(self.error_class):
+                super()._init(subtune)
+
+    def _frame(self) -> None:
+        if self._hosted is None:
+            super()._frame()
+        else:
+            self._hosted.play_frame()
+
+    def snapshot(self) -> List[int]:
+        if self._hosted is None:
+            return super().snapshot()
+        return self._hosted.snapshot()
+
+    def render_grid(self, nframes: int) -> List[List[int]]:
+        """``nframes`` rows; a hosted tune's are framed at its play source's raises.
+
+        A hosted tune whose CPU never entered an interrupt vector (an ``*_entry``
+        row) is not playing: it raises ``error_class``.
+        """
+        if self._hosted is None:
+            return super().render_grid(nframes)
+        with reraise_as(self.error_class):
+            grid = self._hosted.render_grid(nframes)
+        if not any(
+            r[1] is None and r[3].endswith("_entry") for r in self._hosted.host.raw
+        ):
+            raise self.error_class("no interrupt was seen to play the tune")
+        return grid
+
+    def register_writes(self, nframes: int) -> Iterator[RegWrite]:
+        """The post-init baseline at clock 0, then ``nframes`` frames a period apart."""
+        return register_writes_from_player(self, nframes, self.cycles_per_frame)
 
     def render_wav(self, dst, nframes: int, *, model: str = "8580", **kwargs):
         """Render ``nframes`` through an emulated SID to a WAV file at ``dst``."""
