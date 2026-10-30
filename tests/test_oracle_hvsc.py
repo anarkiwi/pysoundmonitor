@@ -70,6 +70,7 @@ def test_render_matches_oracle(oracle_match):  # noqa: F811
 # Every subtune of this tune must match the oracle exactly.
 SIDEWALK = "MUSICIANS/C/Callet_Charles/Sidewalk.sid"
 SIDEWALK_SONGS = 21
+MAX_LEAD = 4
 
 
 @pytest.mark.oracle
@@ -79,9 +80,9 @@ def test_sidewalk_subtunes_match_the_oracle(song):
     assert path is not None, "tune unavailable"
     data = Path(path).read_bytes()
     oracle = oracle_grid(Path(path), song=song)
-    rendered = SoundMonitorPlayer(data, song - 1).render_grid(len(oracle))
+    rendered = SoundMonitorPlayer(data, song - 1).render_grid(len(oracle) + MAX_LEAD)
     assert aligned_match(
-        oracle, rendered, max_lead=4
+        oracle, rendered, max_lead=MAX_LEAD
     ), f"sidewalk song {song}: player render does not match the sidtrace oracle"
 
 
