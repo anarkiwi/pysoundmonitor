@@ -198,7 +198,10 @@ routine's OR source (a constant instead of the song's base volume) and a `JSR`
 hook in place of the `$D418` store. The hook is a `native` statement of the spec:
 the tune's own 6502 runs from the `JSR`, with the mirrored volume in the
 accumulator, and the spec carries on after it. `Future_Spy` and `Lavender` are
-such rips; both play byte-exact to their own 6502. `pysidtracker playspec
+such rips; both play byte-exact to their own 6502. A build that lacks one of the
+operand shapes the binder reads, as a rip that patched elsewhere does, raises
+`SidParseError` naming the missing shape; a patch that leaves every shape in
+place is not detected. `pysidtracker playspec
 unnative` replaces a spec's `native` statements with the spec statements that do
 the same.
 
