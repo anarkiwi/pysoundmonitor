@@ -246,3 +246,31 @@ def test_unnative_states_the_patch_hook_as_its_stores(tune):
     assert "native " not in new.source
     assert "mem[0xd418] :=" in new.source and "mem[0x9f62] :=" in new.source
     equivalent(lambda spec: SoundMonitorPlayer(data, spec=spec), playspec.SPEC, new, 60)
+
+
+def test_a_build_missing_an_anchor_is_refused_by_name():
+    data = helpers.build_engine_sid([song([(0x81, 0x01)])], {1: PLAIN})
+    player = SoundMonitorPlayer(data)
+    view = bytearray(player.view())
+    stop = helpers.ENGINE_BASE + 0x2300 + 0xD0
+    view[stop : stop + 8] = bytes(8)
+    with pytest.raises(SidParseError, match="no stop volume"):
+        playspec.binding(bytes(view), player.entry)
+
+
+def test_a_missing_entry_is_refused():
+    data = helpers.build_engine_sid([song([(0x81, 0x01)])], {1: PLAIN})
+    player = SoundMonitorPlayer(data)
+    with pytest.raises(SidParseError, match="no Soundmonitor play entry"):
+        playspec.binding(player.view(), player.entry + 1)
+
+
+def test_the_snapshot_probe_is_the_streams_the_player_reads():
+    fmt = soundmonitor_format()
+    data, _ = helpers.build_sid()
+    tune = fmt.parser.parse(data)
+    probe = fmt.snapshot_probes()["streams"](tune)
+    section = tune.song.sections[0]
+    assert probe.startswith(section.cia_latch.to_bytes(2, "little"))
+    assert len(probe) > section.pattern_length * 2 * 3
+    assert "canonical" in fmt.snapshot_probes()

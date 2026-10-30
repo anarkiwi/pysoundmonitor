@@ -11,6 +11,7 @@ from pysidtracker import CodePattern, SidImage, find_code_all
 from pysidtracker.playspec import parse as parse_spec
 
 from . import constants as c
+from .errors import SidParseError
 from .reader import _layouts, locate_note_freq
 
 SPEC = parse_spec(
@@ -51,8 +52,13 @@ def _image(view) -> SidImage:
     return SidImage.from_prg(b"\0\0" + bytes(view))
 
 
-def _one(image, pattern):
-    return next(iter(find_code_all(image, pattern))).captures
+def _find(image, pattern, what):
+    """The first match of ``pattern`` in ``image``, else the build is not one the
+    spec models."""
+    found = next(iter(find_code_all(image, pattern)), None)
+    if found is None:
+        raise SidParseError(f"not a build the playspec models: no {what}")
+    return found
 
 
 def _entries(image):
@@ -66,22 +72,31 @@ def entries(view):
 
 def binding(view, entry):
     """The playspec layout of the Soundmonitor instance at ``entry`` in the
-    64 KiB ``view``."""
+    64 KiB ``view``.
+
+    Raises:
+      SidParseError: the code lacks an operand shape the spec binds to, as a rip
+        that patched it elsewhere does.
+    """
     image = _image(view)
-    play = next(m for m in _entries(image) if m.addr == entry)
-    sections = _one(image, SECTIONS)
-    record = _one(image, RECORD)
-    fill = _one(image, FILL)
+    play = next((m for m in _entries(image) if m.addr == entry), None)
+    if play is None:
+        raise SidParseError(f"no Soundmonitor play entry at ${entry:04x}")
+    sections = _find(image, SECTIONS, "section bounds").captures
+    record = _find(image, RECORD, "instrument copy block").captures
+    fill = _find(image, FILL, "state clear").captures
     table = locate_note_freq(image)
+    if table is None:
+        raise SidParseError("not a build the playspec models: no note-frequency tables")
     swap = next(iter(find_code_all(image, SWAP)), None)
     ptrs = swap.captures["zp"] if swap else ZP_PTRS
     fixed = next(iter(find_code_all(image, FIXED)), None)
-    glide = next(iter(find_code_all(image, GLIDE)))
-    silence = next(iter(find_code_all(image, SILENCE)))
-    ramp = next(iter(find_code_all(image, RAMP)))
-    volume = next(iter(find_code_all(image, VOLUME)))
+    glide = _find(image, GLIDE, "glide")
+    silence = _find(image, SILENCE, "stop volume")
+    ramp = _find(image, RAMP, "volume ramp")
+    volume = _find(image, VOLUME, "volume routine")
     hooked = volume.captures["finish"] == JSR_ABS
-    misc = _one(image, MISC)["misc"]
+    misc = _find(image, MISC, "filter flags").captures["misc"]
     return {
         "entry": entry,
         "op_cur_hi": glide.addr + GLIDE_OPERAND,
@@ -111,5 +126,5 @@ def binding(view, entry):
         "base": _layouts(image)[0].base,
         "freq_hi": table.addr,
         "freq_lo": table.addr + c.NOTE_FREQ_LEN,
-        "cia": _one(image, LATCH)["op"] == STA_ABS,
+        "cia": _find(image, LATCH, "latch load").captures["op"] == STA_ABS,
     }

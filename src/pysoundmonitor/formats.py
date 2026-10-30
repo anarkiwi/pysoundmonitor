@@ -90,6 +90,11 @@ def _canonical(tune: SoundMonitorTune) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _stream_bytes(tune: SoundMonitorTune) -> bytes:
+    """The bytes of every stream the player reads, for the corpus snapshot."""
+    return b"".join(model.to_bytes() for _, model, _ in streams(tune.song))
+
+
 def _streams(tune: SoundMonitorTune):
     return streams(tune.song)
 
@@ -104,4 +109,5 @@ def soundmonitor_format() -> SidFormat:
         grammar=GRAMMAR,
         streams=_streams,
         canonical=_canonical,
+        probes={"streams": _stream_bytes},
     )
