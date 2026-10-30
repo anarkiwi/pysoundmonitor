@@ -137,7 +137,7 @@ def test_binding_names_the_synthetic_build():
     assert found["base"] == 0x1000
     assert found["ptrs"] == 0xA5 and found["hdr_fixed"] == 0
     assert found["rec"] == 0x4000 and found["misc"] == found["rec"] + 0x1F3
-    assert found["cia"] is False
+    assert found["cia"] is False and found["swap"] is False
 
 
 def test_the_spec_elaborates_against_the_binding():

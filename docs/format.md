@@ -146,7 +146,9 @@ player.render_wav("tune.wav", 250)           # pysidtracker.audio, emulated SID
 One play call is `entry` (the first call's init, or the stop when the song has
 ended), then, while playing, the voices' glide, vibrato, the filter sweep, the
 pulse sweeps up and down and the arpeggio, the row `clock`, the three `reader`
-machines on a row frame, and the volume. The song's tables are `ro` cells; the
+machines on a row frame, and the volume. Builds that swap their zero-page
+pointer block with a stash on entry and exit (`swap`) swap it in the spec too.
+The song's tables are `ro` cells; the
 instrument copies, effect counters, frequency, pulse and SID mirrors are shared
 cells at the build's own addresses. Where the three voices' code differs the
 spec keeps the difference: voice 1's new-note path stores its control mirror in
@@ -199,11 +201,10 @@ dedicated CI job (`pytest -m oracle`) with Docker. The same job runs
 `tests/test_playspec_oracle.py`: the spec's 64 KiB (outside the stack page and
 the SID window) equals the tune's own 6502 play routine's after every call of
 the whole song, `tv.validate` proves the volume ramp, the filter sweep and start,
-the filter register setup and each voice's glide equal their 6502 subroutines in
+the filter register setup, each voice's glide and arpeggio step, the arpeggio
+start and the instrument loader equal their 6502 subroutines in
 `Only_3` for all initial memory, and bounded checking holds the spec's tempo
-invariant from the tune's post-init memory. The row reader (`reader[0].parse`
-against the 6502 routine at `$C4EF`) did not finish within 50 minutes, so it is
-not proven. HVSC `.sid` files are
+invariant from the tune's post-init memory. HVSC `.sid` files are
 copyright works, fetched to a cache and never committed. See the base
 [oracle-testing guide](https://github.com/anarkiwi/pysidtracker/blob/main/docs/oracle-testing.md).
 

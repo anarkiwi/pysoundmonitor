@@ -7,9 +7,9 @@ spec soundmonitor;
 
 layout {
   entry, init_flag, last_sec, first_sec, rec, misc, fill, fill_hi, ptrs, base,
-  freq_hi, freq_lo, hdr_zp, hdr_fixed: addr;
+  freq_hi, freq_lo, hdr_zp, hdr_fixed, stash: addr;
   fill_n, rec_n: byte;
-  cia: flag;
+  cia, swap: flag;
 }
 
 const REC = 0xCBFA;
@@ -46,6 +46,7 @@ cell last_ctrl: u8[3] @ 0x02CC;
 cell ibase: u8[3] @ 0x02CF;
 cell xpose: u8[3] @ 0x02D2;
 cell sptr: ptr[4] @ L.ptrs;
+cell stash: u8[8] @ L.stash;
 cell hdr_tab: ptr[1] @ L.hdr_zp;
 cell sid: u8[32] @ SID out;
 
@@ -103,6 +104,19 @@ cell fc_hi: u8 @ L.misc + (0xCE0A - MISC);
 cell res_mir: u8 @ L.misc + (0xCE0B - MISC);
 cell vol_mir: u8 @ L.misc + (0xCE0C - MISC);
 cell target: u8[16] @ L.misc + (0xCE0D - MISC);
+
+// ---- the zero-page pointers --------------------------------------------------------
+// Between calls the pointers live in the stash; a call swaps them into zero page
+// on entry and out again at its end.
+proc swap_pointers() {
+  if L.swap {
+    for i in 0..8 {
+      let held = mem[L.ptrs + i];
+      mem[L.ptrs + i] := stash[i];
+      stash[i] := held;
+    }
+  }
+}
 
 // ---- the glide ---------------------------------------------------------------
 proc glide_set(v: u8) {
@@ -337,9 +351,12 @@ proc arp_start(v: u8, ctrl: u8) {
 }
 
 proc arp_step(v: u8) {
-  if arp_on[v] == 0 {
-    return;
+  if arp_on[v] != 0 {
+    arp_run(v);
   }
+}
+
+proc arp_run(v: u8) {
   saved_xy[1] := 7 * v;
   saved_xy[0] := v;
   arp_tmp := detune[v];
@@ -504,6 +521,7 @@ proc init(flag: u8) {
 machine entry {
   signal run: bool = false;
   step {
+    swap_pointers();
     if init_flag != 0 {
       init(init_flag);
     }
@@ -566,6 +584,14 @@ machine pulser_down[x in 0..3] {
 }
 
 machine arpeggiator[x in 0..3] {
+  proc start() {
+    arp_start(x, cpu.a);
+  }
+
+  proc run() {
+    arp_run(x);
+  }
+
   step {
     arp_step(x);
   }
@@ -602,6 +628,10 @@ machine clock {
 }
 
 machine reader[x in 0..3] {
+  proc load() {
+    load_instrument(x, cpu.x);
+  }
+
   proc parse() {
     if mutes & ite(x == 0, 1, ite(x == 1, 2, 4)) != 0 {
       return;
@@ -687,6 +717,12 @@ machine reader[x in 0..3] {
   }
 }
 
+machine leave {
+  step {
+    swap_pointers();
+  }
+}
+
 machine mixer {
   proc regs() {
     filter_regs();
@@ -726,6 +762,7 @@ schedule {
       mixer;
     }
   }
+  leave;
 }
 
 // Each call counts the divider down, reloads it, or starts it afresh.

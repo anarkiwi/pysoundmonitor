@@ -36,11 +36,17 @@ def test_spec_memory_equals_the_6502_for_every_oracle_tune(tune_path):  # noqa: 
         ("glider[0].slide", 0xC098, {"X": 0, "Y": 0}),
         ("glider[1].slide", 0xC098, {"X": 7, "Y": 1}),
         ("glider[2].slide", 0xC098, {"X": 14, "Y": 2}),
+        ("arpeggiator[0].start", 0xCB57, {"X": 0}),
+        ("arpeggiator[0].run", 0xCB8A, {"X": 0, "Y": 0}),
+        ("arpeggiator[1].run", 0xCB8A, {"X": 1, "Y": 7}),
+        ("arpeggiator[2].run", 0xCB8A, {"X": 2, "Y": 14}),
+        ("reader[0].load", 0xCAA6, {"A": 0, "Y": 0x0F}),
     ],
 )
 def test_routines_are_proven_against_the_6502(tune, routine, pc, registers):
-    """The volume ramp, the filter sweep and start, and each voice's glide equal
-    their 6502 subroutines for all initial memory."""
+    """The volume ramp, the filter sweep and start, each voice's glide and arpeggio
+    step, the arpeggio start and the instrument loader equal their 6502
+    subroutines for all initial memory."""
     player = SoundMonitorPlayer(tune(PROOF_TUNE).read_bytes())
     view = player.view()
     found = playspec.binding(view, player.entry)

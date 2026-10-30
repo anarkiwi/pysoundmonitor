@@ -27,7 +27,7 @@ SECTIONS = CodePattern(
 RECORD = CodePattern("A2 {count} 9D {rec:w} CA 10 FA")
 FILL = CodePattern("A2 {count} 9D {fill:w} CA D0 FA")
 MISC = CodePattern("AD {misc:w} 29 10 F0 ?? AD")
-SWAP = CodePattern("B9 A5 00 AA B9 {ptrs:w} 99 A5 00")
+SWAP = CodePattern("B9 {zp} 00 AA B9 {stash:w} 99 {zp} 00")
 FIXED = CodePattern("A9 {lo} 85 AB A9 {hi} 85 AC BD ?? ?? 85 {zp}")
 ZP_PTRS = 0xA5
 HEADER_PTR = 6
@@ -62,7 +62,7 @@ def binding(view, entry):
     fill = _one(image, FILL)
     table = locate_note_freq(image)
     swap = next(iter(find_code_all(image, SWAP)), None)
-    ptrs = swap.captures["ptrs"] if swap else ZP_PTRS
+    ptrs = swap.captures["zp"] if swap else ZP_PTRS
     fixed = next(iter(find_code_all(image, FIXED)), None)
     return {
         "entry": entry,
@@ -76,6 +76,8 @@ def binding(view, entry):
         "fill_n": fill["count"],
         "misc": _one(image, MISC)["misc"],
         "ptrs": ptrs,
+        "stash": swap.captures["stash"] if swap else 0,
+        "swap": swap is not None,
         "hdr_zp": fixed.captures["zp"] if fixed else ptrs + HEADER_PTR,
         "hdr_fixed": fixed.captures["lo"] | fixed.captures["hi"] << 8 if fixed else 0,
         "base": _layouts(image)[0].base,
