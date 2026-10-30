@@ -69,6 +69,27 @@ def _describe(tune: SoundMonitorTune) -> Iterable[str]:
     yield f"instruments: {len(song.instruments)}"
 
 
+def _canonical(tune: SoundMonitorTune) -> str:
+    """The song as text: equal for two tunes exactly when they play the same song."""
+    lines = []
+    for sec in tune.song.sections:
+        lines.append(
+            f"section {sec.index} latch={sec.cia_latch:04x} tempo={sec.tempo} "
+            f"patlen={sec.pattern_length} ramp={sec.vol_ramp:02x} "
+            f"volume={sec.base_volume:02x} arp={bytes(sec.arp_table).hex()} "
+            f"transpose={bytes(sec.transpose).hex()}"
+        )
+        for voice, rows in enumerate(sec.voices):
+            lines.append(
+                f"  voice {voice} "
+                + " ".join(f"{r.note:02x}{r.ctrl:02x}" for r in rows)
+            )
+    for inst in tune.song.instruments:
+        tail = inst.filter.raw.hex() if inst.filter else "-"
+        lines.append(f"instrument {inst.index} {inst.raw.hex()} {tail}")
+    return "\n".join(lines) + "\n"
+
+
 def _streams(tune: SoundMonitorTune):
     return streams(tune.song)
 
@@ -82,4 +103,5 @@ def soundmonitor_format() -> SidFormat:
         describe=_describe,
         grammar=GRAMMAR,
         streams=_streams,
+        canonical=_canonical,
     )

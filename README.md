@@ -9,8 +9,8 @@ Soundmonitor player is relocatable, so it is located by a relocation-invariant
 hardware-register fingerprint and packed/relocating builds are detected by
 running the tune's init in a 6502 emulator — container headers are not trusted.
 `SoundMonitorPlayer` reproduces the replay byte-exact (validated against the
-`sidtrace` oracle) by running the tune's own `init`/`play` on the shared
-`TunePlayer`.
+`sidtrace` oracle) by running the playroutine as a `pysidtracker.playspec`
+spec (`specs/soundmonitor.play`) on the memory the tune's own `init` leaves.
 
 ## Install
 
@@ -28,7 +28,7 @@ print(song.cia_latch, len(song.sections), len(song.instruments))
 for section in song.sections:
     print(section.cadence, section.tempo, section.pattern_length)
 
-# Byte-exact playback (TunePlayer subclass driving the tune's own init/play):
+# Byte-exact playback (a playspec SpecPlayer over the tune's post-init memory):
 player = psm.SoundMonitorPlayer(open("tune.sid", "rb").read())
 grid = player.render_grid(250)         # 25-reg, forward-filled per-frame grid
 writes = list(player.register_writes(250))   # pysidtracker RegWrite log

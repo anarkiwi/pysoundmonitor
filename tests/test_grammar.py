@@ -41,8 +41,9 @@ def test_section_header_rejects_zero_pattern_length():
 def test_section_header_must_be_14_bytes():
     with pytest.raises(SidParseError):
         GRAMMAR.parse_exact(_header()[:-1], SECTION_HEADER)
-    with pytest.raises(SidParseError, match="offset 14"):
+    with pytest.raises(SidParseError, match="ends after 14 of its 15"):
         GRAMMAR.parse_exact(_header() + b"\0", SECTION_HEADER)
+    assert GRAMMAR.parse_prefix(_header() + bytes(9), SECTION_HEADER).size == 14
 
 
 def test_pattern_is_whole_rows():
@@ -132,6 +133,7 @@ _ACCESSORS = {
     "stream pointer lo": lambda t, v: t.stream_ptr(v, 7) & 0xFF,
     "stream pointer hi": lambda t, v: t.stream_ptr(v, 7) >> 8,
     "transpose": lambda t, v: t.transpose(v, 7),
+    "instrument base": lambda t, v: t.instrument_base(v, 7),
 }
 
 
@@ -150,15 +152,14 @@ def test_documented_table_pages_are_where_the_grammar_reads_them():
         voice = re.match(r"voice (\d) (.+)", label)
         if voice:
             number, what = int(voice.group(1)), voice.group(2)
-            if what == "spare":
-                reads = [
-                    accessor(tables, v)
-                    for accessor in _ACCESSORS.values()
-                    for v in range(3)
-                ] + [tables.header_ptr(7)]
-                assert not any(reads), label
-            else:
-                assert _ACCESSORS[what](tables, number) == 0xA5, label
+            assert _ACCESSORS[what](tables, number) == 0xA5, label
+            others = [
+                accessor(tables, v)
+                for name, accessor in _ACCESSORS.items()
+                for v in range(3)
+                if (name, v) != (what, number)
+            ] + [tables.header_ptr(7)]
+            assert not any(others), label
         else:
             lo_hi = 0xA5 if label.endswith("lo") else 0xA500
             assert tables.header_ptr(7) == lo_hi, label

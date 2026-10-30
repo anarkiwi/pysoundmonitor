@@ -26,6 +26,7 @@ def make_section(
     base_vol=0x0F,
     arp=(0, 1, 2, 3, 4, 5, 6, 7),
     transpose=(0, 0, 0),
+    ibase=(0, 0, 0),
     voices=None,
 ):
     """A section spec dict with sensible defaults."""
@@ -44,6 +45,7 @@ def make_section(
         "base_vol": base_vol,
         "arp": tuple(arp),
         "transpose": tuple(transpose),
+        "ibase": tuple(ibase),
         "voices": voices,
     }
 
@@ -70,6 +72,7 @@ def build_payload(
     with_freq=True,
     with_operands=True,
     bounds=None,
+    engine=False,
 ):
     """Build the raw C64 image (load..end) plus its ``(load, init, play)``."""
     mem = bytearray(0x10000)
@@ -93,6 +96,7 @@ def build_payload(
             mem[base + c.VOICE_PTR_LO[v] + i] = stream & 0xFF
             mem[base + c.VOICE_PTR_HI[v] + i] = (stream >> 8) & 0xFF
             mem[base + c.VOICE_XPOSE[v] + i] = sec["transpose"][v]
+            mem[base + c.VOICE_XPOSE[v] + 0x100 + i] = sec["ibase"][v]
             for r, (note, ctrl) in enumerate(sec["voices"][v]):
                 mem[stream + r * 2] = note
                 mem[stream + r * 2 + 1] = ctrl
@@ -137,7 +141,46 @@ def build_payload(
         mem[pos : pos + 3] = bytes((c.LDA_ABSX, lo & 0xFF, (lo >> 8) & 0xFF))
         pos += 3
         end = max(end, freq + 2 * c.NOTE_FREQ_LEN)
-    return bytes(mem[base:end]), base, player, player + 0x20, anchor
+    init, play = player, player + 0x20
+    if engine:
+        end, init, play = _engine(mem, base, len(sections), end)
+    return bytes(mem[base:end]), base, init, play, anchor
+
+
+ENGINE_STATE = 0x3000
+
+
+def _engine(mem, base, count, end):
+    """Write the operand shapes the playspec binds to, and a play that calls the entry.
+
+    The entry is trapped and run as the spec, so these bytes are never executed
+    apart from the init and the call: they carry only the addresses the binder
+    reads (init flag, section bounds, state blocks) and the work cells.
+    """
+    eng = base + 0x2300
+    flag, last, first = eng + 0x90, eng + 0x91, eng + 0x92
+    rec = base + ENGINE_STATE
+    fill, misc = rec + 0x185, rec + 0x1F3
+    entry = eng + 0x20
+    code = {
+        0x00: assemble(f"JSR ${entry:04X}\nRTS", eng)[0],
+        0x10: assemble(f"LDA #$01\nSTA ${flag:04X}\nRTS", eng + 0x10)[0],
+        0x20: bytes((0xAD, flag & 0xFF, flag >> 8, 0xF0, 0x03, 0x20))
+        + bytes(((eng + 0x10) & 0xFF, (eng + 0x10) >> 8))
+        + bytes((0xAE, 0xC3, 0x02, 0xD0, 0x00, 0x60)),
+        0x40: bytes((0xAE, 0xC1, 0x02, 0xEC, last & 0xFF, last >> 8, 0xD0, 0x00))
+        + bytes((0xAD, 0xC4, 0x02, 0xF0, 0x00, 0xA9, 0x00, 0x8D, 0xC3, 0x02))
+        + bytes((0xA9, 0x01, 0x60, 0xAE, first & 0xFF, first >> 8)),
+        0x60: bytes((0xA2, 0x5A, 0x9D, rec & 0xFF, rec >> 8, 0xCA, 0x10, 0xFA)),
+        0x70: bytes((0xA2, 0xA7, 0x9D, fill & 0xFF, fill >> 8, 0xCA, 0xD0, 0xFA)),
+        0x80: bytes((0xAD, misc & 0xFF, misc >> 8, 0x29, 0x10, 0xF0, 0x00, 0xAD))
+        + bytes((0x00, 0x00)),
+        0xA0: bytes((0xAD, 0x04, 0xDC, 0xC8, 0xB1, 0xAB, 0xC8, 0xC9, 0x06)),
+    }
+    for offset, blob in code.items():
+        mem[eng + offset : eng + offset + len(blob)] = blob
+    mem[last], mem[first] = count - 1, 0
+    return max(end, eng + 0xB0), eng + 0x10, eng
 
 
 def build_sid(sections=None, instruments=None, **kwargs):
@@ -256,6 +299,18 @@ def build_no_fingerprint():
     """A valid-looking PSID whose image carries no engine fingerprint."""
     payload = bytes(0x200)
     return _psid(payload, 0x1000, 0x1000, 0x1020)
+
+
+def build_engine_sid(sections=None, instruments=None, **kwargs):
+    """A PSID the playspec plays: the synthetic song and the engine's operand shapes."""
+    if sections is None:
+        sections = [make_section()]
+    if instruments is None:
+        instruments = make_instruments()
+    payload, load, init, play, _ = build_payload(
+        sections, instruments, engine=True, **kwargs
+    )
+    return _psid(payload, load, init, play)
 
 
 def build_playable_sid(load=0x1000):
