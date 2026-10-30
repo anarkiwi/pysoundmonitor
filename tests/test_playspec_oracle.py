@@ -40,6 +40,21 @@ def test_row_reader_is_proven_against_the_6502(tune):
 
 
 @pytest.mark.oracle
+@pytest.mark.parametrize(
+    "routine, pc", [("mixer.step", 0xCA2B), ("sweeper.step", 0xC25F)]
+)
+def test_effect_routines_are_proven_against_the_6502(tune, routine, pc):
+    """The volume ramp and the filter sweep equal their 6502 subroutines."""
+    player = SoundMonitorPlayer(tune(ROW_READER_TUNE).read_bytes())
+    view = player.view()
+    found = playspec.binding(view, player.entry)
+    result = validate(playspec.SPEC, found, routine, view, pc)
+    assert result.proven, result.counterexample and {
+        k: v for k, v in result.counterexample.items() if k != "memory"
+    }
+
+
+@pytest.mark.oracle
 def test_bounded_checking_holds_from_post_init_memory(tune):
     player = SoundMonitorPlayer(tune(ROW_READER_TUNE).read_bytes())
     found = playspec.binding(player.view(), player.entry)
