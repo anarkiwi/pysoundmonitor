@@ -11,6 +11,7 @@ import pytest
 
 from pysidtracker import Cadence, MemPlayer, RegWrite, SidImage, TriggerSource
 from pysidtracker import irqhost
+from pysidtracker.testing import whole_song
 from pysidtracker import registers as reg
 
 import helpers
@@ -23,7 +24,7 @@ def test_player_is_memplayer():
 
 def test_render_grid_shape_and_progress():
     player = SoundMonitorPlayer(helpers.build_playable_sid())
-    grid = player.render_grid(6)
+    grid = player.render_grid(whole_song(6))
     assert len(grid) == 6
     assert all(len(row) == MemPlayer.REG_COUNT for row in grid)
     # The play routine bumps voice-1/voice-2 freq-lo each frame, so the grid moves.
@@ -57,7 +58,7 @@ def test_snapshot_masks_pw_hi():
 
 def test_accepts_sidimage():
     image = SidImage.from_bytes(helpers.build_playable_sid())
-    grid = SoundMonitorPlayer(image).render_grid(3)
+    grid = SoundMonitorPlayer(image).render_grid(whole_song(3))
     assert len(grid) == 3
 
 
@@ -120,7 +121,9 @@ def test_render_wav(tmp_path):
     ],
 )
 def test_installed_interrupt_plays_each_frame(source, kwargs, voice, acked):
-    grid = SoundMonitorPlayer(helpers.build_irq_sid(source, **kwargs)).render_grid(8)
+    grid = SoundMonitorPlayer(helpers.build_irq_sid(source, **kwargs)).render_grid(
+        whole_song(8)
+    )
     assert [row[voice] for row in grid] == list(range(1, 9))
     assert all(row[voice + 1] == acked for row in grid)
     assert all(row[0x18] == 0x0F for row in grid)
@@ -128,7 +131,7 @@ def test_installed_interrupt_plays_each_frame(source, kwargs, voice, acked):
 
 def test_installed_interrupt_preempts_a_main_loop():
     player = SoundMonitorPlayer(helpers.build_irq_sid("raster", loop=True))
-    grid = player.render_grid(8)
+    grid = player.render_grid(whole_song(8))
     assert [row[0] for row in grid] == list(range(1, 9))
     spins = [row[0x15] for row in grid]
     assert all(a != b for a, b in zip(spins, spins[1:]))
@@ -138,14 +141,14 @@ def test_installed_interrupt_preempts_a_main_loop():
 def test_installed_interrupt_needs_a_source(loop):
     player = SoundMonitorPlayer(helpers.build_irq_sid(loop=loop, cli=False))
     with pytest.raises(SidParseError, match="no interrupt"):
-        player.render_grid(4)
+        player.render_grid(whole_song(4))
 
 
 def test_frames_follow_the_play_source_after_a_grid():
     player = SoundMonitorPlayer(helpers.build_irq_sid("cia"))
-    first = player.render_grid(4)
+    first = player.render_grid(whole_song(4))
     assert [row[7] for row in first] == [1, 2, 3, 4]
-    assert [row[7] for row in player.render_grid(3)] == [5, 6, 7]
+    assert [row[7] for row in player.render_grid(whole_song(3))] == [5, 6, 7]
 
 
 def test_hosted_play_frame_reports_changed_registers():

@@ -28,13 +28,8 @@ from pathlib import Path
 import pytest
 
 from pysidtracker import make_oracle_fixtures
-from pysidtracker.oracle import (
-    aligned_match,
-    cached_sidtrace,
-    sidtrace_cadence,
-    sidtrace_grid,
-)
-from pysidtracker.testing import default_cache, oracle_grid, resolve_tune
+from pysidtracker.oracle import aligned_match
+from pysidtracker.testing import oracle_grid, resolve_tune, whole_song
 
 import helpers
 from pysoundmonitor import SoundMonitorPlayer
@@ -64,7 +59,6 @@ def _render(data, nframes):
 tune_id, oracle_match = make_oracle_fixtures(
     TUNES,
     render=_render,
-    frames=250,
 )
 
 
@@ -76,7 +70,6 @@ def test_render_matches_oracle(oracle_match):  # noqa: F811
 # Every subtune of this tune must match the oracle exactly.
 SIDEWALK = "MUSICIANS/C/Callet_Charles/Sidewalk.sid"
 SIDEWALK_SONGS = 21
-SIDEWALK_FRAMES = 250
 
 
 @pytest.mark.oracle
@@ -85,12 +78,7 @@ def test_sidewalk_subtunes_match_the_oracle(song):
     path = resolve_tune(SIDEWALK)
     assert path is not None, "tune unavailable"
     data = Path(path).read_bytes()
-    csv = default_cache("csv") / f"sidewalk-{song}.csv.zst"
-    seconds = SIDEWALK_FRAMES // 50 + 2
-    rows = cached_sidtrace(Path(path), csv, seconds=seconds, song=song)
-    oracle = sidtrace_grid(rows, cycles_per_frame=sidtrace_cadence(rows))[
-        :SIDEWALK_FRAMES
-    ]
+    oracle = oracle_grid(Path(path), song=song)
     rendered = SoundMonitorPlayer(data, song - 1).render_grid(len(oracle))
     assert aligned_match(
         oracle, rendered, max_lead=4
@@ -115,7 +103,11 @@ def test_installed_interrupt_matches_oracle(name, kwargs):
     sid.parent.mkdir(parents=True, exist_ok=True)
     sid.write_bytes(data)
     oracle = oracle_grid(
-        sid, oracle_cache=sid.parent, seconds=3, frames=100, force=True
+        sid,
+        oracle_cache=sid.parent,
+        seconds=whole_song(3),
+        frames=whole_song(100),
+        force=True,
     )
-    assert len(oracle) == 100
-    assert SoundMonitorPlayer(data).render_grid(100) == oracle
+    assert len(oracle) == whole_song(100)
+    assert SoundMonitorPlayer(data).render_grid(whole_song(100)) == oracle
