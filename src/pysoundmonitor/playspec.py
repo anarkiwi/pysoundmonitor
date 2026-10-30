@@ -44,6 +44,7 @@ JSR_ABS = 0x20
 GLIDE_OPERAND = 11
 VOLUME_OPERAND = 7
 VOLUME_FINISH = 12
+BASE_VOLUME = 0xCDEF - 0xCDED
 
 
 def _image(view) -> SidImage:
@@ -80,12 +81,17 @@ def binding(view, entry):
     ramp = next(iter(find_code_all(image, RAMP)))
     volume = next(iter(find_code_all(image, VOLUME)))
     hooked = volume.captures["finish"] == JSR_ABS
+    misc = _one(image, MISC)["misc"]
     return {
         "entry": entry,
         "op_cur_hi": glide.addr + GLIDE_OPERAND,
         "stop_vol": silence.addr + 1,
         "ramp_store": ramp.captures["store"] == STA_ABS,
-        "vol_or": volume.addr + VOLUME_OPERAND,
+        "vol_or": (
+            volume.addr + VOLUME_OPERAND
+            if volume.captures["opcode"] == ORA_IMM
+            else misc + BASE_VOLUME
+        ),
         "vol_imm": volume.captures["opcode"] == ORA_IMM,
         "vol_hook": volume.addr + VOLUME_FINISH if hooked else 0,
         "init_flag": play.captures["flag"],
@@ -96,7 +102,7 @@ def binding(view, entry):
         "fill": fill["fill"],
         "fill_hi": fill["fill"],
         "fill_n": fill["count"],
-        "misc": _one(image, MISC)["misc"],
+        "misc": misc,
         "ptrs": ptrs,
         "stash": swap.captures["stash"] if swap else 0,
         "swap": swap is not None,
