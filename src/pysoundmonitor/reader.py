@@ -40,6 +40,16 @@ from pysidtracker.image import MEM_SIZE
 from pysidtracker.locate import AFTER_INIT, STATIC
 
 from . import constants as c
+from .grammar import (
+    GRAMMAR,
+    INSTRUMENT,
+    PATTERN,
+    SECTION_HEADER,
+    SECTION_HEADER_LEN,
+    TABLES_LEN,
+    TRACK_TABLES,
+    TrackTables,
+)
 from .errors import SidParseError
 from .model import Instrument, NoteFreqTable, Row, Section, Song
 from .variant import (
@@ -172,30 +182,45 @@ def _null_ptr(header: int) -> bool:
     return header == 0
 
 
-def _section_ok(image: SidImage, base: int, index: int) -> bool:
+def _tables(image: SidImage, base: int) -> TrackTables:
+    """The track tables at data ``base``."""
+    return GRAMMAR.read(image, base, TRACK_TABLES, size=TABLES_LEN).model
+
+
+def _section_header(image: SidImage, tables: TrackTables, index: int):
+    """Section ``index``'s header and address, or ``None`` if it is not a section."""
+    addr = tables.header_ptr(index)
+    if _null_ptr(addr) or not image.contains(addr):
+        return None
+    try:
+        header = GRAMMAR.read(image, addr, SECTION_HEADER, size=SECTION_HEADER_LEN)
+    except SidParseError:
+        return None
+    return header.model, addr
+
+
+def _stream_ptrs(image: SidImage, tables: TrackTables, index: int):
+    """The three voices' stream addresses of section ``index``, or ``None``."""
+    ptrs = [tables.stream_ptr(voice, index) for voice in range(3)]
+    if any(_null_ptr(ptr) or not image.contains(ptr) for ptr in ptrs):
+        return None
+    return ptrs
+
+
+def _section_ok(image: SidImage, tables: TrackTables, index: int) -> bool:
     """Cheap validity probe: header + all voice stream pointers land in-image."""
-    header = image.ptr(
-        base + c.SECTION_HEADER_PTR_LO, base + c.SECTION_HEADER_PTR_HI, index
+    return (
+        _section_header(image, tables, index) is not None
+        and _stream_ptrs(image, tables, index) is not None
     )
-    if _null_ptr(header) or not image.contains(header):
-        return False
-    patlen = image.peek(header + c.SH_PATLEN)
-    if patlen == 0 or patlen > c.MAX_PATTERN_LEN:
-        return False
-    for voice in range(3):
-        stream = image.ptr(
-            base + c.VOICE_PTR_LO[voice], base + c.VOICE_PTR_HI[voice], index
-        )
-        if _null_ptr(stream) or not image.contains(stream):
-            return False
-    return True
 
 
 def _count_sections(image: SidImage, base: int, start: int, last: int) -> int:
     """Valid sections decodable from ``start`` to ``last`` (stops at first bad)."""
+    tables = _tables(image, base)
     count = 0
     for index in _section_span(start, last):
-        if not _section_ok(image, base, index):
+        if not _section_ok(image, tables, index):
             break
         count += 1
     return count
@@ -240,48 +265,29 @@ def _layouts(image: SidImage) -> List[_Layout]:
 
 
 def _decode_stream(image: SidImage, addr: int, rows: int) -> List[Row]:
-    out: List[Row] = []
-    rows = min(rows, c.MAX_PATTERN_LEN)
-    for row in range(rows):
-        base = addr + row * c.ROW_LEN
-        out.append(Row.decode(image.peek(base), image.peek(base + 1)))
-    return out
+    stream = GRAMMAR.read(image, addr, PATTERN, size=rows * c.ROW_LEN).model
+    return [Row.decode(note, ctrl) for note, ctrl in stream.rows]
 
 
-def _decode_section(image: SidImage, base: int, index: int) -> Optional[Section]:
-    header = image.ptr(
-        base + c.SECTION_HEADER_PTR_LO, base + c.SECTION_HEADER_PTR_HI, index
-    )
-    if _null_ptr(header) or not image.contains(header):
+def _decode_section(
+    image: SidImage, tables: TrackTables, index: int
+) -> Optional[Section]:
+    found = _section_header(image, tables, index)
+    ptrs = _stream_ptrs(image, tables, index)
+    if found is None or ptrs is None:
         return None
-    patlen = image.peek(header + c.SH_PATLEN)
-    if patlen == 0 or patlen > c.MAX_PATTERN_LEN:
-        return None
-    latch = image.peek(header + c.SH_LATCH_LO) | (
-        image.peek(header + c.SH_LATCH_HI) << 8
-    )
-    arp = tuple(image.peek(header + c.SH_ARP_TABLE + i) for i in range(c.ARP_TABLE_LEN))
-    voices: List[List[Row]] = []
-    transpose = []
-    for voice in range(3):
-        stream = image.ptr(
-            base + c.VOICE_PTR_LO[voice], base + c.VOICE_PTR_HI[voice], index
-        )
-        if _null_ptr(stream) or not image.contains(stream):
-            return None
-        voices.append(_decode_stream(image, stream, patlen))
-        transpose.append(image.peek(base + c.VOICE_XPOSE[voice] + index))
+    header, addr = found
     return Section(
         index=index,
-        header_addr=header,
-        cia_latch=latch,
-        tempo=image.peek(header + c.SH_TEMPO),
-        pattern_length=patlen,
-        vol_ramp=image.peek(header + c.SH_VOL_RAMP),
-        base_volume=image.peek(header + c.SH_BASE_VOL),
-        arp_table=arp,
-        transpose=(transpose[0], transpose[1], transpose[2]),
-        voices=voices,
+        header_addr=addr,
+        cia_latch=header.latch,
+        tempo=header.tempo,
+        pattern_length=header.patlen,
+        vol_ramp=header.vol_ramp,
+        base_volume=header.base_vol,
+        arp_table=header.arp,
+        transpose=tuple(tables.transpose(voice, index) for voice in range(3)),
+        voices=[_decode_stream(image, ptr, header.patlen) for ptr in ptrs],
     )
 
 
@@ -296,8 +302,9 @@ def _decode_sections(
     dependent table into garbage and hitting the 256 cap).
     """
     sections: List[Section] = []
+    tables = _tables(image, base)
     for index in _section_span(start, last):
-        section = _decode_section(image, base, index)
+        section = _decode_section(image, tables, index)
         if section is None:
             break
         sections.append(section)
@@ -323,8 +330,8 @@ def _decode_instruments(
         addr = table + index * c.INSTRUMENT_STRIDE
         if not image.contains(addr):
             continue
-        record = image.slice(addr, c.INSTRUMENT_STRIDE)
-        out.append(Instrument.from_record(index, record))
+        record = GRAMMAR.read(image, addr, INSTRUMENT, size=c.INSTRUMENT_STRIDE).model
+        out.append(Instrument.from_record(index, record.to_bytes()))
     return out
 
 

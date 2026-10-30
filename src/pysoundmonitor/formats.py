@@ -13,6 +13,7 @@ from typing import Any, Iterable
 from pysidtracker import SidImage
 from pysidtracker.formats import SidFormat
 
+from .grammar import GRAMMAR, streams
 from .model import Song
 from .player import SoundMonitorPlayer, SoundMonitorSidParser
 from .reader import parse
@@ -68,6 +69,10 @@ def _describe(tune: SoundMonitorTune) -> Iterable[str]:
     yield f"instruments: {len(song.instruments)}"
 
 
+def _streams(tune: SoundMonitorTune):
+    return streams(tune.song)
+
+
 def soundmonitor_format() -> SidFormat:
     """The Soundmonitor :class:`~pysidtracker.formats.SidFormat`."""
     return SidFormat(
@@ -75,4 +80,6 @@ def soundmonitor_format() -> SidFormat:
         parser=SoundMonitorFormatParser(),
         player=_player,
         describe=_describe,
+        grammar=GRAMMAR,
+        streams=_streams,
     )
