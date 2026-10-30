@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pysoundmonitor"
-version = "0.7.0"
+version = "0.8.0"
 description = "Pure-Python player, reader and detector for Soundmonitor (64'er / Hulsbeck) SID tunes"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     # playspec.SpecPlayer runs the replay; survey file --song, cadence_info and the
     # hvsc test fixture back the scripts and tests.
-    "pysidtracker>=0.45.0",
+    "pysidtracker>=0.48.1",
 ]
 
 [project.optional-dependencies]

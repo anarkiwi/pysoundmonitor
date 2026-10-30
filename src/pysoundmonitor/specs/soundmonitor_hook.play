@@ -1,0 +1,7 @@
+spec soundmonitor_hook extends soundmonitor;
+
+layout { vol_hook: addr; }
+
+override proc volume_store() {
+  native L.vol_hook(a = vol_mir) resumes L.vol_hook + 3;
+}

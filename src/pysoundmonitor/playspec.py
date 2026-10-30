@@ -2,21 +2,23 @@
 
 ``specs/soundmonitor.play`` states the play call; :func:`binding` resolves its
 ``layout`` from the reader's discovery plus the cells the play code's own
-operands name.
+operands name. A rip whose volume routine calls its own code runs
+``specs/soundmonitor_hook.play``, the variant that hands the volume to that code
+(:func:`bind`).
 """
 
 from importlib import resources
 
 from pysidtracker import CodePattern, SidImage, find_code_all
-from pysidtracker.playspec import parse as parse_spec
+from pysidtracker.playspec import load
 
 from . import constants as c
 from .errors import SidParseError
 from .reader import _layouts, locate_note_freq
 
-SPEC = parse_spec(
-    resources.files(__package__).joinpath("specs/soundmonitor.play").read_text()
-)
+_SPECS = resources.files(__package__).joinpath("specs")
+SPEC = load(_SPECS.joinpath("soundmonitor.play"))
+HOOK_SPEC = load(_SPECS.joinpath("soundmonitor_hook.play"))
 
 ENTRIES = (
     CodePattern("20 {swap:w} AD {flag:w} F0 03 20 {init:w} AE {on:w} D0"),
@@ -63,6 +65,16 @@ def _find(image, pattern, what):
 
 def _entries(image):
     return [m for pattern in ENTRIES for m in find_code_all(image, pattern)]
+
+
+def bind(view, entry):
+    """``(spec, binding)`` of the instance at ``entry``: the hook variant when its
+    volume routine calls a rip's code, the base spec otherwise."""
+    found = binding(view, entry)
+    if found["vol_hook"]:
+        return HOOK_SPEC, found
+    del found["vol_hook"]
+    return SPEC, found
 
 
 def entries(view):

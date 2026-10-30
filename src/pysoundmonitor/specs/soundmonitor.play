@@ -7,7 +7,7 @@ spec soundmonitor;
 
 layout {
   entry, init_flag, last_sec, first_sec, rec, misc, fill, fill_hi, ptrs, base,
-  freq_hi, freq_lo, hdr_zp, hdr_fixed, stash, op_cur_hi, vol_or, vol_hook,
+  freq_hi, freq_lo, hdr_zp, hdr_fixed, stash, op_cur_hi, vol_or,
   stop_vol: addr;
   fill_n, rec_n: byte;
   cia, swap, ramp_store, vol_imm: flag;
@@ -386,11 +386,7 @@ proc arp_run(v: u8) {
 
 // ---- the volume ----------------------------------------------------------------------
 proc volume_store() {
-  if L.vol_hook != 0 {
-    native L.vol_hook(a = vol_mir) resumes L.vol_hook + 3;
-  } else {
-    sid[0x18] := vol_mir;
-  }
+  sid[0x18] := vol_mir;
 }
 
 proc volume() {

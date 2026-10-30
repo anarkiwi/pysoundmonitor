@@ -242,10 +242,27 @@ def test_unnative_states_the_patch_hook_as_its_stores(tune):
     player = SoundMonitorPlayer(data)
     player.play_frame()
     found = playspec.binding(player.memory, player.entry)
-    new = unnative(playspec.SPEC, found, player.memory)
+    new = unnative(playspec.HOOK_SPEC, found, player.memory)
     assert "native " not in new.source
     assert "mem[0xd418] :=" in new.source and "mem[0x9f62] :=" in new.source
-    equivalent(lambda spec: SoundMonitorPlayer(data, spec=spec), playspec.SPEC, new, 60)
+
+    def make(spec):
+        return SoundMonitorPlayer(
+            data, bind=lambda view, entry: (spec, playspec.binding(view, entry))
+        )
+
+    equivalent(make, playspec.HOOK_SPEC, new, 60)
+
+
+def test_bind_picks_the_hook_variant_only_for_a_hooked_volume_routine():
+    for patched, spec in ((True, playspec.HOOK_SPEC), (False, playspec.SPEC)):
+        data = helpers.build_engine_sid(
+            [song([(0x81, 0x01)])], {1: PLAIN}, patched=patched
+        )
+        player = SoundMonitorPlayer(data)
+        chosen, found = playspec.bind(player.view(), player.entry)
+        assert chosen is spec
+        assert ("vol_hook" in found) is patched
 
 
 def test_a_build_missing_an_anchor_is_refused_by_name():
