@@ -9,6 +9,7 @@ Byte-exact validation against real HVSC tunes lives in the ``oracle``-marked
 """
 
 import pytest
+from pylibresidfp import SID
 
 from pysidtracker import Cadence, MemPlayer, RegWrite, SidImage, TriggerSource
 from pysidtracker.testing import whole_song
@@ -90,22 +91,10 @@ def test_parser_builds_player():
     assert isinstance(player, SoundMonitorPlayer)
 
 
-class _FakeSid:
-    """Minimal SID device double (write_register/clock/sampling_frequency)."""
-
-    sampling_frequency = 44100.0
-
-    def write_register(self, reg, val):
-        pass
-
-    def clock(self, _delta):
-        return [0]
-
-
 def test_render_wav(tmp_path):
     out = tmp_path / "out.wav"
     player = SoundMonitorPlayer(helpers.build_engine_sid())
-    path = player.render_wav(out, 4, device=_FakeSid())
+    path = player.render_wav(out, 4, device=SID("8580"))
     assert path == out and out.exists() and out.stat().st_size > 0
 
 
