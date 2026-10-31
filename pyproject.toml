@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pysoundmonitor"
-version = "0.8.0"
+version = "0.9.0"
 description = "Pure-Python player, reader and detector for Soundmonitor (64'er / Hulsbeck) SID tunes"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     # playspec.SpecPlayer runs the replay; survey file --song, cadence_info and the
     # hvsc test fixture back the scripts and tests.
-    "pysidtracker>=0.48.1",
+    "pysidtracker>=0.54.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +30,7 @@ dev = [
     "black>=26.10.1",
     "pylint>=4.1.2",
     "pytest>=9.1.1",
+    "pylibresidfp>=0.1.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
     # Decompress the sidtrace oracle's zstd CSV traces (oracle comparison tests).

@@ -32,7 +32,7 @@ for section in song.sections:
 player = psm.SoundMonitorPlayer(open("tune.sid", "rb").read())
 grid = player.render_grid(250)         # 25-reg, forward-filled per-frame grid
 writes = list(player.register_writes(250))   # pysidtracker RegWrite log
-player.render_wav("tune.wav", 250)     # emulated SID (pyresidfp)
+player.render_wav("tune.wav", 250)     # emulated SID (pylibresidfp)
 
 # Relocation-tolerant detection (untrustworthy header):
 det = psm.SoundMonitorSidParser().detect("tune.sid")
