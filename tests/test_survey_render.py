@@ -68,7 +68,9 @@ def test_play_reports_unknown_trigger(monkeypatch):
 
 
 def test_render_plays_an_installed_interrupt():
-    grid, info = oracle_hvsc._play(helpers.build_irq_sid("cia", bank=0x35), 1, 10)
+    grid, info = oracle_hvsc._play(
+        helpers.build_irq_sid("cia", bank=0x35, engine=True), 1, 10
+    )
     assert grid[:, 7].tolist() == list(range(1, 11))
     assert (info["rsid"], info["trigger"], info["speed"]) == (True, "cia_timer", 1)
 

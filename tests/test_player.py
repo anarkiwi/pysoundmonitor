@@ -110,16 +110,23 @@ def test_render_wav(tmp_path):
     ],
 )
 def test_installed_interrupt_plays_each_frame(source, kwargs, voice, acked):
-    grid = SoundMonitorPlayer(helpers.build_irq_sid(source, **kwargs)).render_grid(
-        whole_song(8)
-    )
+    grid = SoundMonitorPlayer(
+        helpers.build_irq_sid(source, engine=True, **kwargs)
+    ).render_grid(whole_song(8))
     assert [row[voice] for row in grid] == list(range(1, 9))
     assert all(row[voice + 1] == acked for row in grid)
     assert all(row[0x18] == 0x0F for row in grid)
 
 
+@pytest.mark.parametrize("source", ["raster", "cia", "nmi"])
+def test_installed_interrupt_without_the_engine_is_rejected(source):
+    player = SoundMonitorPlayer(helpers.build_irq_sid(source))
+    with pytest.raises(SidParseError, match="reach no modelled entry"):
+        player.render_grid(whole_song(8))
+
+
 def test_installed_interrupt_preempts_a_main_loop():
-    player = SoundMonitorPlayer(helpers.build_irq_sid("raster", loop=True))
+    player = SoundMonitorPlayer(helpers.build_irq_sid("raster", loop=True, engine=True))
     grid = player.render_grid(whole_song(8))
     assert [row[0] for row in grid] == list(range(1, 9))
     spins = [row[0x15] for row in grid]
@@ -134,16 +141,17 @@ def test_installed_interrupt_needs_a_source(loop):
 
 
 def test_frames_follow_the_play_source_after_a_grid():
-    player = SoundMonitorPlayer(helpers.build_irq_sid("cia"))
+    player = SoundMonitorPlayer(helpers.build_irq_sid("cia", engine=True))
     first = player.render_grid(whole_song(4))
     assert [row[7] for row in first] == [1, 2, 3, 4]
     assert [row[7] for row in player.render_grid(whole_song(3))] == [5, 6, 7]
 
 
 def test_hosted_play_frame_reports_changed_registers():
-    player = SoundMonitorPlayer(helpers.build_irq_sid("nmi"))
+    player = SoundMonitorPlayer(helpers.build_irq_sid("nmi", engine=True))
     assert dict(player.play_frame())[14] == 1
-    assert player.play_frame() == [(14, 2)]
+    second = dict(player.play_frame())
+    assert second[14] == 2 and 0x18 not in second
 
 
 def test_cadence_follows_subtune(monkeypatch):
