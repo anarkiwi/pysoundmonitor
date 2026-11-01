@@ -2,7 +2,8 @@
 
 Registers a :class:`~pysidtracker.formats.SidFormat` so ``pysidtracker info|reglog|
 wav`` and ``format:`` surveys recognise Soundmonitor tunes, using the package's own
-parser and :class:`~pysoundmonitor.player.SoundMonitorPlayer`.
+parser and :class:`~pysoundmonitor.player.SoundMonitorPlayer`, and exports the
+playspec through the ``spec`` hook.
 """
 
 from __future__ import annotations
@@ -11,8 +12,9 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from pysidtracker import SidImage
-from pysidtracker.formats import SidFormat
+from pysidtracker.formats import SidFormat, SpecBinding
 
+from . import playspec
 from .grammar import GRAMMAR, streams
 from .model import Song
 from .player import SoundMonitorPlayer, SoundMonitorSidParser
@@ -51,7 +53,7 @@ class SoundMonitorFormatParser(SoundMonitorSidParser):
                 "author": header.author,
                 "released": header.released,
                 "load_addr": header.real_load_address,
-                "init_addr": header.init_address,
+                "init_addr": header.init_address or header.real_load_address,
                 "play_addr": header.play_address,
             }
         return SoundMonitorTune(
@@ -61,6 +63,21 @@ class SoundMonitorFormatParser(SoundMonitorSidParser):
 
 def _player(tune: SoundMonitorTune) -> SoundMonitorPlayer:
     return SoundMonitorPlayer(tune.data, tune.subtune)
+
+
+def spec_binding(tune: SoundMonitorTune) -> SpecBinding:
+    """The :class:`~pysidtracker.formats.SpecBinding` :class:`SoundMonitorPlayer` plays:
+    the packaged ``soundmonitor.play`` (or its hook variant, chosen per instance by
+    :func:`~pysoundmonitor.playspec.bind`) on the tune's own container."""
+    image = SidImage.from_bytes(tune.data)
+    return SpecBinding(
+        playspec.SPEC,
+        playspec.bind,
+        image.image,
+        entries=playspec.entries,
+        subtune=tune.subtune,
+        sid=image.container + image.image,
+    )
 
 
 def _describe(tune: SoundMonitorTune) -> Iterable[str]:
@@ -110,4 +127,5 @@ def soundmonitor_format() -> SidFormat:
         streams=_streams,
         canonical=_canonical,
         probes={"streams": _stream_bytes},
+        spec=spec_binding,
     )

@@ -291,3 +291,15 @@ def test_the_snapshot_probe_is_the_streams_the_player_reads():
     assert probe.startswith(section.cia_latch.to_bytes(2, "little"))
     assert len(probe) > section.pattern_length * 2 * 3
     assert "canonical" in fmt.snapshot_probes()
+
+
+def test_format_exports_the_spec():
+    data = helpers.build_engine_sid([song([(0x85, 0x01)])], {1: PLAIN})
+    fmt = soundmonitor_format()
+    tune = fmt.parser.parse(data)
+    bound = fmt.spec(tune)
+    assert bound.spec is playspec.SPEC and bound.bind is playspec.bind
+    frames = whole_song(FIRST_ROW + 40)
+    assert fmt.spec_player(tune).render_grid(frames) == (
+        SoundMonitorPlayer(data).render_grid(frames)
+    )
