@@ -21,7 +21,7 @@ from .model import (
 from .player import SoundMonitorPlayer, SoundMonitorSidParser
 from .reader import find_fingerprint, parse, read
 
-__version__ = "0.10.0"
+__version__ = "0.10.1"
 
 __all__ = [
     "FilterTail",
