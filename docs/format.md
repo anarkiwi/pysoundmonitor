@@ -176,7 +176,7 @@ per-section cadence is also exposed on the model (`latch + 1` cycles/call, and
 
 ### Tunes that install their own interrupt
 
-A header play address of 0 (an RSID such as `Sidewalk`) means init installs the
+A header play address of 0 (an RSID) means init installs the
 play handler itself. `SoundMonitorPlayer` then plays the tune on
 [`pysidtracker.irqhost.InterruptPlayer`](https://github.com/anarkiwi/pysidtracker/blob/main/docs/irqhost.md)
 through its `SpecPlayer`, which boots and runs it as the sidtrace oracle's
