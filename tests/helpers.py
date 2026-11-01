@@ -364,6 +364,7 @@ IRQ_LOAD = 0x1000
 IRQ_MAIN = 0x1030
 IRQ_HANDLER = 0x1040
 IRQ_COUNTER = 0x10F0
+IRQ_ENGINE = 0x2000
 
 
 def _bump(reg):
@@ -371,7 +372,9 @@ def _bump(reg):
     return f"INC ${IRQ_COUNTER:04X}\nLDA ${IRQ_COUNTER:04X}\nSTA ${0xD400 + reg:04X}\n"
 
 
-def build_irq_sid(source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D):
+def build_irq_sid(
+    source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D, engine=False
+):
     """An RSID (play address 0) whose init installs its own play interrupt.
 
     ``source`` is ``raster`` (VIC), ``cia`` (CIA #1 Timer A) or ``nmi`` (CIA #2
@@ -383,7 +386,9 @@ def build_irq_sid(source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D)
     ``$0318`` (left through ``$FE47``), else through ``$FFFE``/``$FFFA`` (``RTI``).
     Init ends ``CLI``/``RTS``; ``loop`` never returns, bumping a second counter
     into ``$D415``; without ``cli`` interrupts stay masked. Functional 6502
-    written for the tests -- no tune bytes.
+    written for the tests -- no tune bytes. With ``engine`` the synthetic engine
+    follows the interrupt code: init calls its init and the handler its play, as
+    a Soundmonitor RSID does.
     """
     nmi, kernal = source == "nmi", bank & 2
     if source == "raster":
@@ -407,6 +412,13 @@ def build_irq_sid(source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D)
         handler += _bump(reg) + f"skip: LDA ${cia + 0xD:04X}\nSTA ${0xD401 + reg:04X}\n"
         handler += "PLA\n" if save else ""
         handler += f"JMP ${0xFE47 if nmi else 0xEA31:04X}\n" if kernal else "RTI\n"
+    if engine:
+        sections, instruments = [make_section()], make_instruments()
+        tail, load, tail_init, tail_play, _ = build_payload(
+            sections, instruments, engine=True, base=IRQ_ENGINE
+        )
+        init = f"JSR ${tail_init:04X}\n" + init
+        handler = f"PHA\nTXA\nPHA\nTYA\nPHA\nJSR ${tail_play:04X}\nPLA\nTAY\nPLA\nTAX\nPLA\n{handler}"
     init += f"SEI\nLDA #${IRQ_HANDLER & 0xFF:02X}\nSTA ${vector:04X}\n"
     init += f"LDA #${IRQ_HANDLER >> 8:02X}\nSTA ${vector + 1:04X}\n{program}"
     init += "LDA #$0F\nSTA $D418\n" + ("CLI\n" if cli else "")
@@ -417,4 +429,6 @@ def build_irq_sid(source="raster", *, bank=0x37, loop=False, cli=True, ack=0x8D)
     for org, src in ((IRQ_LOAD, init), (IRQ_MAIN, spin), (IRQ_HANDLER, handler)):
         code = assemble(src, org)[0]
         body[org - IRQ_LOAD : org - IRQ_LOAD + len(code)] = code
+    if engine:
+        body += bytes(load - IRQ_LOAD - len(body)) + tail
     return _psid(bytes((IRQ_LOAD & 0xFF, IRQ_LOAD >> 8)) + body, 0, IRQ_LOAD, 0, "RSID")

@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     # playspec.SpecPlayer runs the replay; survey file --song, cadence_info and the
     # hvsc test fixture back the scripts and tests.
-    "pysidtracker>=0.54.0",
+    "pysidtracker>=0.54.1",
 ]
 
 [project.optional-dependencies]
