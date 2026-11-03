@@ -229,3 +229,4 @@ __marimo__/
 core.[0-9]*
 # HVSC oracle survey work tree (copyright-derived traces).
 .hvsc-survey/
+.gate/
