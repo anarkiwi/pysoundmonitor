@@ -21,7 +21,7 @@ classifiers = [
 dependencies = [
     # playspec.SpecPlayer runs the replay; survey file --song, cadence_info and the
     # hvsc test fixture back the scripts and tests.
-    "pysidtracker>=0.61.0",
+    "pysidtracker>=0.62.0",
 ]
 
 [project.optional-dependencies]
@@ -32,6 +32,8 @@ dev = [
     "pylibresidfp>=0.1.0",
     "pytest-cov>=7.1.0",
     "pytest-xdist>=3.8.0",
+    # The 6502 assembler the tests build code with.
+    "jennings>=0.12.0",
     # Decompress the sidtrace oracle's zstd CSV traces (oracle comparison tests).
     "zstandard>=0.25.0",
 ]

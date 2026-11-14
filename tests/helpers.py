@@ -7,14 +7,17 @@ emits a self-consistent PSID (or bare ``.prg``) that the reader decodes.
 
 from __future__ import annotations
 
+from jennings.assembler import Assembler
+from jennings.devices.mpu6502 import MPU
 from pysidtracker import write_psid  # re-exported for tests
-from pysidtracker.asm6502 import assemble
 
 from pysoundmonitor import constants as c
 
 STA_DC04 = c.STA_DC04
 STA_DC05 = c.STA_DC05
 CMP_06 = c.CMP_06
+
+assemble = Assembler(MPU()).assemble_program
 
 
 def make_section(
